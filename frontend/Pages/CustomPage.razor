@@ -1,0 +1,37 @@
+@page "/custom/{**Path}"
+@using Lidstroem.Frontend.Core.Services
+@inject CustomPageRegistry CustomPages
+@inject NavigationManager Nav
+
+@* 
+  Catches any route registered by a custom page that is NOT an /entity/* override.
+  Examples: /crm/pipeline, /crm/donations, /reports/quarterly
+
+  Custom page plugins declare their route in ICustomPageMetadata.Route.
+  If the route starts with /entity/ it is handled by Entity.razor instead.
+  All other routes land here.
+*@
+
+@if (_entry != null)
+{
+    <DynamicComponent Type="@_entry.ComponentType" />
+}
+else
+{
+    <div class="entity-not-found">
+        <h2>Page not available</h2>
+        <p>This page is not enabled for your account.</p>
+    </div>
+}
+
+@code {
+    [Parameter] public string Path { get; set; } = string.Empty;
+
+    private ActiveCustomPageEntry? _entry;
+
+    protected override void OnParametersSet()
+    {
+        var route = "/" + Path.TrimStart('/');
+        _entry = CustomPages.GetForRoute(route);
+    }
+}

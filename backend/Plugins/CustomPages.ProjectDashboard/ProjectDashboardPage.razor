@@ -1,0 +1,148 @@
+@* 
+  Lidstroem.CustomPages.ProjectDashboard / ProjectDashboardPage.razor
+  
+  This component renders instead of the generic EntityListPage for /entity/Project
+  on tenants where "ProjectDashboard" is enabled.
+
+  - Uses var(--color-primary) etc. so it inherits the tenant's skin automatically.
+  - Calls whatever API endpoints it needs — standard ApiClient injection.
+  - Has no knowledge of other tenants or routing; it just renders its content.
+*@
+
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+
+<div class="custom-page project-dashboard">
+
+    <div class="page-header">
+        <h1 class="page-title">Projects</h1>
+        <button class="btn btn-primary" @onclick='() => Nav.NavigateTo("/entity/Project/new")'>
+            + New project
+        </button>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="loading-indicator">Loading…</div>
+    }
+    else
+    {
+        <div class="dashboard-grid">
+
+            {{!-- Summary cards --}}
+            <div class="stat-card">
+                <span class="stat-label">Active projects</span>
+                <span class="stat-value">@_activeCount</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Total donations</span>
+                <span class="stat-value">@_donationTotal.ToString("N0") kr</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-label">Overdue milestones</span>
+                <span class="stat-value @(_overdueCount > 0 ? "stat-value--warning" : "")">
+                    @_overdueCount
+                </span>
+            </div>
+
+            {{!-- Project list with inline donation totals --}}
+            <section class="dashboard-section dashboard-section--full">
+                <h2 class="section-title">All projects</h2>
+                <table class="entity-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Donations</th>
+                            <th>Next milestone</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in _projects)
+                        {
+                            var id = GetInt(p, "id");
+                            <tr>
+                                <td class="cell-primary">@GetStr(p, "name")</td>
+                                <td><span class="badge">@GetStr(p, "status")</span></td>
+                                <td>@GetDonationTotal(id).ToString("N0") kr</td>
+                                <td>@GetNextMilestone(id)</td>
+                                <td class="cell-actions">
+                                    <button class="btn btn-sm"
+                                            @onclick='() => Nav.NavigateTo($"/entity/Project/{id}")'>
+                                        Open
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </section>
+
+        </div>
+    }
+
+</div>
+
+@code {
+    @inject NavigationManager Nav
+
+    private bool _loading = true;
+    private List<JsonElement> _projects = new();
+    private Dictionary<int, decimal> _donationsByProject = new();
+    private Dictionary<int, string> _nextMilestoneByProject = new();
+    private int _activeCount;
+    private decimal _donationTotal;
+    private int _overdueCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load projects and donations in parallel
+        await Task.WhenAll(LoadProjectsAsync(), LoadDonationsAsync());
+        ComputeStats();
+        _loading = false;
+    }
+
+    private async Task LoadProjectsAsync()
+    {
+        var result = await Api.GetListAsync("/api/projects");
+        _projects = result ?? new();
+    }
+
+    private async Task LoadDonationsAsync()
+    {
+        // Extension data — donations keyed by project id
+        var result = await Api.GetListAsync("/api/donations?groupBy=projectId");
+        if (result == null) return;
+        foreach (var item in result)
+        {
+            var projectId = GetInt(item, "projectId");
+            var total = item.TryGetProperty("total", out var t) ? t.GetDecimal() : 0;
+            _donationsByProject[projectId] = total;
+
+            if (item.TryGetProperty("nextMilestone", out var nm))
+                _nextMilestoneByProject[projectId] = nm.GetString() ?? "—";
+        }
+    }
+
+    private void ComputeStats()
+    {
+        _activeCount = _projects.Count(p => GetStr(p, "status") == "Active");
+        _donationTotal = _donationsByProject.Values.Sum();
+        _overdueCount = _nextMilestoneByProject.Values.Count(d =>
+            DateTime.TryParse(d, out var dt) && dt < DateTime.Today);
+    }
+
+    private decimal GetDonationTotal(int projectId) =>
+        _donationsByProject.TryGetValue(projectId, out var v) ? v : 0;
+
+    private string GetNextMilestone(int projectId) =>
+        _nextMilestoneByProject.TryGetValue(projectId, out var v) ? v : "—";
+
+    private static string GetStr(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var p) ? p.GetString() ?? "—" : "—";
+
+    private static int GetInt(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var p) ? p.GetInt32() : 0;
+}

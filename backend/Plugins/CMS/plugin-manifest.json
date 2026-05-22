@@ -1,0 +1,20 @@
+{
+  "pluginKey": "CMS",
+  "displayName": "CMS",
+  "description": "Manages public-facing pages and tenant site configuration.",
+  "version": "1.0.0",
+  "routePrefix": "cms",
+  "entities": [
+    { "name": "Page",       "hasGdprHandler": false, "hasLinkResolver": false },
+    { "name": "TenantSite", "hasGdprHandler": false, "hasLinkResolver": false }
+  ],
+  "permissions": [
+    { "name": "CMS.View",    "category": "CMS" },
+    { "name": "CMS.Edit",    "category": "CMS" },
+    { "name": "CMS.Publish", "category": "CMS" }
+  ],
+  "navGroup": null,
+  "navOrder": 800,
+  "dependsOn": [],
+  "optionallyExtends": []
+}

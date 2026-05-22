@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lidstroem</title>
+    <base href="/" />
+
+    <!--
+      Fonts are loaded dynamically by SkinService after it reads the tenant's
+      skin config. The tags below are placeholders replaced by JS at boot.
+      We preconnect to Google Fonts to avoid a DNS lookup delay.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link id="google-fonts-link" rel="stylesheet" href="" />
+
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="css/skin-editor.css" />
+
+    <!--
+      Inline critical CSS — these are the bare-minimum tokens applied before
+      the Blazor app boots, so the boot screen looks correct immediately.
+      SkinService overwrites them once tenant config is loaded.
+    -->
+    <style>
+      :root {
+        --color-primary:      #2563EB;
+        --color-primary-dark: #1D4ED8;
+        --color-surface:      #F8FAFC;
+        --color-background:   #FFFFFF;
+        --color-text:         #0F172A;
+        --color-text-muted:   #64748B;
+        --color-border:       #E2E8F0;
+        --color-danger:       #DC2626;
+        --color-success:      #16A34A;
+        --font-body:          'DM Sans', system-ui, sans-serif;
+        --font-heading:       'DM Sans', system-ui, sans-serif;
+        --font-size-base:     16px;
+        --font-weight-heading:700;
+        --line-height-base:   1.6;
+        --radius-sm:          6px;
+        --radius-md:          10px;
+        --radius-lg:          16px;
+        --radius-full:        9999px;
+        --shadow-card:        0 1px 3px rgba(0,0,0,.08);
+        --shadow-dropdown:    0 10px 15px -3px rgba(0,0,0,.1);
+        --sidebar-width:      256px;
+        --content-max-width:  1280px;
+      }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Shown while Blazor WASM downloads and initialises -->
+        <div class="boot-screen">
+            <div class="boot-spinner"></div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="" class="reload">Reload</a>
+        <a class="dismiss">🗙</a>
+    </div>
+
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script src="js/lidstroem.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="js/charts.js"></script>
+</body>
+</html>

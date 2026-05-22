@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="9.0.0" />
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\Lidstroem.Core.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\Lidstroem.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\WebAPI\Lidstroem.WebAPI.csproj" />
+    <ProjectReference Include="..\..\Plugins\ACL\Lidstroem.Plugins.ACL.csproj" />
+    <ProjectReference Include="..\..\Plugins\CMS\Lidstroem.Plugins.CMS.csproj" />
+    <ProjectReference Include="..\..\Plugins\Communication\Lidstroem.Plugins.Communication.csproj" />
+    <ProjectReference Include="..\..\Plugins\Donations\Lidstroem.Plugins.Donations.csproj" />
+    <ProjectReference Include="..\..\Plugins\FieldReports\Lidstroem.Plugins.FieldReports.csproj" />
+    <ProjectReference Include="..\..\Plugins\GDPR\Lidstroem.Plugins.GDPR.csproj" />
+    <ProjectReference Include="..\..\Plugins\Invitations\Lidstroem.Plugins.Invitations.csproj" />
+    <ProjectReference Include="..\..\Plugins\Resources\Lidstroem.Plugins.Resources.csproj" />
+    <ProjectReference Include="..\..\Plugins\Schema\Lidstroem.Plugins.Schema.csproj" />
+    <ProjectReference Include="..\..\Plugins\SuperAdmin\Lidstroem.Plugins.SuperAdmin.csproj" />
+    <ProjectReference Include="..\..\Plugins\WorkManagement.Activities\Lidstroem.Plugins.WorkManagement.Activities.csproj" />
+    <ProjectReference Include="..\..\Plugins\WorkManagement.Projects\Lidstroem.Plugins.WorkManagement.Projects.csproj" />
+  </ItemGroup>
+</Project>

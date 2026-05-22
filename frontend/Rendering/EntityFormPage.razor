@@ -1,0 +1,199 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Rendering.Fields
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<div class="entity-form-page">
+    <div class="page-header">
+        <button class="back-btn" @onclick="GoBack">
+            <Icon Name="arrow-left" Size="16" />
+            Back
+        </button>
+        <h1 class="page-title">
+            @(IsNew ? $"New {Schema.DisplayName}" : $"Edit {Schema.DisplayName}")
+        </h1>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="form-skeleton"></div>
+    }
+    else
+    {
+        <div class="entity-form">
+            @foreach (var field in FormFields)
+            {
+                <div class="form-field @(field.IsRequired ? "required" : "")">
+                    <label class="field-label">
+                        @field.DisplayName
+                        @if (field.IsRequired) { <span class="required-star">*</span> }
+                    </label>
+
+                    @if (field.Description != null)
+                    {
+                        <p class="field-description">@field.Description</p>
+                    }
+
+                    <FieldEditor
+                        Field="@field"
+                        Value="@GetValue(field.FieldName)"
+                        ValueChanged="@(v => SetValue(field.FieldName, v))"
+                        Disabled="@field.IsReadOnly" />
+
+                    @if (_errors.TryGetValue(field.FieldName, out var error))
+                    {
+                        <span class="field-error">@error</span>
+                    }
+                </div>
+            }
+
+            <div class="form-actions">
+                <button class="btn btn-ghost" @onclick="GoBack">Cancel</button>
+                <button class="btn btn-primary" @onclick="Submit" disabled="@_submitting">
+                    @if (_submitting)
+                    {
+                        <span class="btn-spinner"></span>
+                    }
+                    @(IsNew ? "Create" : "Save changes")
+                </button>
+            </div>
+        </div>
+    }
+
+    @if (_successMessage != null)
+    {
+        <div class="toast toast-success">@_successMessage</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EntitySchema Schema { get; set; } = null!;
+    [Parameter] public string? Id { get; set; }
+
+    private Dictionary<string, object?> _formData = new();
+    private Dictionary<string, string> _errors = new();
+    private bool _loading;
+    private bool _submitting;
+    private string? _successMessage;
+
+    private bool IsNew => Id == null;
+
+    private IEnumerable<FieldDefinition> FormFields =>
+        Schema.Fields.Where(f => f.ShowInForm).OrderBy(f => f.SortOrder);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _formData = new();
+        _errors = new();
+
+        if (!IsNew)
+        {
+            _loading = true;
+            var existing = await Api.GetOneAsync($"{Schema.ApiBasePath}/{Id}");
+            if (existing.HasValue)
+                PopulateFromJson(existing.Value);
+            _loading = false;
+        }
+    }
+
+    private void PopulateFromJson(JsonElement element)
+    {
+        foreach (var field in Schema.Fields)
+        {
+            if (element.TryGetProperty(field.FieldName.ToLowerInvariant(), out var val) ||
+                element.TryGetProperty(field.FieldName, out val))
+            {
+                _formData[field.FieldName] = val.ValueKind switch
+                {
+                    JsonValueKind.String  => val.GetString(),
+                    JsonValueKind.Number  => val.TryGetDecimal(out var d) ? (object)d : val.GetInt32(),
+                    JsonValueKind.True    => true,
+                    JsonValueKind.False   => false,
+                    _                    => null
+                };
+            }
+        }
+    }
+
+    private object? GetValue(string fieldName) =>
+        _formData.TryGetValue(fieldName, out var v) ? v : null;
+
+    private void SetValue(string fieldName, object? value)
+    {
+        _formData[fieldName] = value;
+        _errors.Remove(fieldName); // clear error on change
+    }
+
+    private bool Validate()
+    {
+        _errors.Clear();
+        foreach (var field in FormFields)
+        {
+            var val = GetValue(field.FieldName);
+            if (field.IsRequired && (val == null || string.IsNullOrWhiteSpace(val.ToString())))
+                _errors[field.FieldName] = $"{field.DisplayName} is required.";
+
+            if (val is string str)
+            {
+                if (field.MinLength.HasValue && str.Length < field.MinLength)
+                    _errors[field.FieldName] = $"Minimum {field.MinLength} characters.";
+                if (field.MaxLength.HasValue && str.Length > field.MaxLength)
+                    _errors[field.FieldName] = $"Maximum {field.MaxLength} characters.";
+            }
+        }
+        return _errors.Count == 0;
+    }
+
+    private async Task Submit()
+    {
+        if (!Validate()) return;
+
+        _submitting = true;
+        try
+        {
+            bool success;
+            if (IsNew)
+            {
+                var result = await Api.PostAsync(Schema.ApiBasePath, _formData);
+                success = result.HasValue;
+                if (success)
+                {
+                    var newId = result!.Value.TryGetProperty("id", out var idProp)
+                        ? idProp.ToString() : null;
+                    Nav.NavigateTo($"/entity/{Schema.EntityType}/{newId}");
+                    return;
+                }
+            }
+            else
+            {
+                // BUG FIX #16: The server-side controllers guard against mismatched IDs:
+                //   if (id != dto.Id) return BadRequest();
+                // PopulateFromJson reads the entity's camelCase JSON ("id") but stores it
+                // under the original FieldName key. Neither "Id" nor "id" were reliably present
+                // in _formData, so dto.Id always defaulted to 0 and every PUT returned 400.
+                // Fix: explicitly inject the route Id into _formData before sending.
+                if (Id != null && int.TryParse(Id, out var numericId))
+                    _formData["Id"] = numericId;
+
+                success = await Api.PutAsync($"{Schema.ApiBasePath}/{Id}", _formData);
+                if (success)
+                {
+                    _successMessage = "Saved successfully.";
+                    await Task.Delay(2000);
+                    _successMessage = null;
+                }
+            }
+
+            if (!success)
+                _errors["_global"] = "Something went wrong. Please try again.";
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private void GoBack() => Nav.NavigateTo($"/entity/{Schema.EntityType}");
+}

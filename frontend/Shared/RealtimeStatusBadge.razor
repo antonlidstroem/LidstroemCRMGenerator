@@ -1,0 +1,74 @@
+@*
+  RealtimeStatusBadge — shows a small live indicator in the layout.
+  Green = connected, yellow = reconnecting, nothing = disconnected.
+
+  Drop this in the topbar of ClarityLayout / MomentumLayout / FocusLayout.
+
+  Usage:
+    <RealtimeStatusBadge />
+*@
+
+@using Lidstroem.Frontend.Core.Services
+@implements IDisposable
+@inject RealtimeService Realtime
+
+@if (Realtime.State == RealtimeConnectionState.Connected)
+{
+    <span class="realtime-badge realtime-badge--connected" title="Live updates active">
+        <span class="realtime-dot"></span>
+    </span>
+}
+else if (Realtime.State == RealtimeConnectionState.Reconnecting)
+{
+    <span class="realtime-badge realtime-badge--reconnecting" title="Reconnecting…">
+        <span class="realtime-dot realtime-dot--pulse"></span>
+    </span>
+}
+
+<style>
+    .realtime-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 2px 7px;
+        border-radius: 99px;
+    }
+
+    .realtime-badge--connected {
+        background: color-mix(in srgb, var(--color-success, #22c55e) 15%, transparent);
+        color: var(--color-success, #22c55e);
+    }
+
+    .realtime-badge--reconnecting {
+        background: color-mix(in srgb, var(--color-warning, #f59e0b) 15%, transparent);
+        color: var(--color-warning, #f59e0b);
+    }
+
+    .realtime-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+    }
+
+    .realtime-dot--pulse {
+        animation: realtime-pulse 1.2s ease-in-out infinite;
+    }
+
+    @@keyframes realtime-pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.3; }
+    }
+</style>
+
+@code {
+    protected override void OnInitialized() =>
+        Realtime.StateChanged += OnStateChanged;
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() =>
+        Realtime.StateChanged -= OnStateChanged;
+}

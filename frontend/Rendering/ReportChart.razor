@@ -1,0 +1,53 @@
+@*
+  ReportChart — renders a bar, line or pie chart from a ReportResult.
+  Used by ReportPage and ReportWidget.
+
+  Uses CSS custom properties from the active skin so chart colours
+  always match the tenant's branding.
+*@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject IJSRuntime JS
+
+<div class="report-chart" @ref="_container">
+    <canvas @ref="_canvas"></canvas>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ReportResultVm Result { get; set; } = null!;
+    [Parameter, EditorRequired] public ReportChartHintVm Hint { get; set; } = null!;
+
+    private ElementReference _canvas;
+    private ElementReference _container;
+    private bool _rendered;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender && _rendered) return;
+        if (Result.Rows.Count == 0) return;
+
+        var labels = Result.Rows
+            .Select(r => r.TryGetValue(Hint.LabelColumn, out var el)
+                ? el.GetString() ?? el.GetRawText()
+                : "")
+            .ToList();
+
+        var values = Result.Rows
+            .Select(r => r.TryGetValue(Hint.ValueColumn, out var el)
+                ? el.ValueKind == JsonValueKind.Number ? el.GetDecimal() : 0
+                : 0)
+            .ToList();
+
+        await JS.InvokeVoidAsync("lidstroem.renderChart", _canvas, new
+        {
+            type = Hint.ChartType,
+            labels,
+            values,
+            label = Result.Columns
+                .FirstOrDefault(c => c.Key == Hint.ValueColumn)?.DisplayName
+                ?? Hint.ValueColumn
+        });
+
+        _rendered = true;
+    }
+}

@@ -1,0 +1,46 @@
+@* 
+  EntitySync — drop this component into any list or detail page to get
+  automatic live refresh when another user changes the same data.
+
+  Usage on a list page:
+    <EntitySync EntityType="Project" OnChange="LoadAsync" />
+
+  Usage on a detail page (only fires for this specific entity id):
+    <EntitySync EntityType="Project" EntityId="@Id" OnChange="LoadAsync" />
+
+  The component renders nothing visible. It just wires up the subscription
+  and tears it down when the parent component is disposed.
+*@
+
+@using Lidstroem.Frontend.Core.Services
+@implements IDisposable
+@inject RealtimeService Realtime
+
+@code {
+    /// <summary>The entity type to watch, e.g. "Project".</summary>
+    [Parameter, EditorRequired] public string EntityType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional. When set, only fires OnChange for this specific entity id.
+    /// When null, fires for any change to the entity type.
+    /// </summary>
+    [Parameter] public int? EntityId { get; set; }
+
+    /// <summary>Called when a matching change arrives from the server.</summary>
+    [Parameter, EditorRequired] public Func<Task> OnChange { get; set; } = () => Task.CompletedTask;
+
+    private IDisposable? _sub;
+
+    protected override void OnInitialized()
+    {
+        _sub = Realtime.OnEntityChanged(EntityType, async evt =>
+        {
+            // Filter to specific entity id if provided
+            if (EntityId.HasValue && evt.EntityId != EntityId.Value) return;
+
+            await OnChange();
+        });
+    }
+
+    public void Dispose() => _sub?.Dispose();
+}

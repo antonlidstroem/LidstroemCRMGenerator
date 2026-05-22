@@ -1,0 +1,120 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject SchemaService Schema
+
+<div class="relation-picker">
+    <input type="text"
+           class="field-input"
+           value="@_displayValue"
+           @oninput="SearchAsync"
+           @onfocus="OpenAsync"
+           placeholder="@($"Search {Field.RelatedEntityType}…")"
+           disabled="@Disabled" />
+
+    @if (_open && _options.Count > 0)
+    {
+        <ul class="relation-dropdown">
+            @foreach (var opt in _options)
+            {
+                <li class="relation-option" @onclick="() => Select(opt)">
+                    @opt.Label
+                </li>
+            }
+        </ul>
+    }
+
+    @if (_open && _options.Count == 0 && !string.IsNullOrEmpty(_query))
+    {
+        <div class="relation-empty">No results for "@_query"</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FieldDefinition Field { get; set; } = null!;
+    [Parameter] public string? Value { get; set; }
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private string? _displayValue;
+    private string? _query;
+    private bool _open;
+    private List<RelationOption> _options = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrEmpty(Value) && string.IsNullOrEmpty(_displayValue))
+        {
+            // Resolve display name for existing value
+            var schema = Field.RelatedEntityType != null
+                ? await Schema.GetAsync(Field.RelatedEntityType) : null;
+
+            if (schema != null)
+            {
+                var item = await Api.GetOneAsync($"{schema.ApiBasePath}/{Value}");
+                _displayValue = item.HasValue ? ExtractLabel(item.Value) : Value;
+            }
+        }
+    }
+
+    private async Task OpenAsync()
+    {
+        _open = true;
+        await LoadOptionsAsync(string.Empty);
+    }
+
+    private async Task SearchAsync(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? string.Empty;
+        _displayValue = _query;
+        await LoadOptionsAsync(_query);
+    }
+
+    private async Task LoadOptionsAsync(string query)
+    {
+        if (Field.RelatedEntityType == null) return;
+
+        var schema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (schema == null) return;
+
+        // Fix 1: Pass pageSize so we get a useful dropdown population.
+        // 200 is enough for any realistic picker; for tenants with more records
+        // the search-box filter will narrow the results client-side.
+        var items = await Api.GetListAsync($"{schema.ApiBasePath}?pageSize=200");
+        if (items == null) return;
+
+        _options = items
+            .Select(item => new RelationOption(
+                GetId(item) ?? string.Empty,
+                ExtractLabel(item)))
+            .Where(o => string.IsNullOrEmpty(query) ||
+                        o.Label.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Take(10)
+            .ToList();
+    }
+
+    // BUG FIX #8: Select was a synchronous void method that called ValueChanged.InvokeAsync
+    // without awaiting it. The returned Task was silently discarded, meaning any exception
+    // thrown by the parent's ValueChanged handler was swallowed and the component tree was
+    // not correctly notified of the state change. Changed to async Task.
+    private async Task Select(RelationOption option)
+    {
+        _displayValue = option.Label;
+        _open = false;
+        await ValueChanged.InvokeAsync(option.Id);
+    }
+
+    private static string? GetId(JsonElement el) =>
+        el.TryGetProperty("id", out var p) ? p.ToString() : null;
+
+    private static string ExtractLabel(JsonElement el)
+    {
+        foreach (var candidate in new[] { "displayName", "title", "name", "email" })
+            if (el.TryGetProperty(candidate, out var p) && p.ValueKind == JsonValueKind.String)
+                return p.GetString() ?? string.Empty;
+        return el.TryGetProperty("id", out var id) ? $"#{id}" : "Unknown";
+    }
+
+    private record RelationOption(string Id, string Label);
+}

@@ -1,0 +1,171 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Shared
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+
+@if (Schema == null) return;
+
+<div class="entity-list-page">
+    <!-- Page header -->
+    <div class="page-header">
+        <div class="page-header-left">
+            <Icon Name="@Schema.Icon" Size="24" />
+            <h1 class="page-title">@Schema.DisplayNamePlural</h1>
+        </div>
+        <div class="page-header-actions">
+            @foreach (var action in ToolbarActions)
+            {
+                <ActionButton Action="@action" OnExecuted="Reload" />
+            }
+        </div>
+    </div>
+
+    <!-- Data table -->
+    @if (_loading)
+    {
+        <div class="list-skeleton">
+            @for (int i = 0; i < 8; i++)
+            {
+                <div class="skeleton-row"></div>
+            }
+        </div>
+    }
+    else if (_rows.Count == 0)
+    {
+        <div class="list-empty">
+            <Icon Name="inbox" Size="48" />
+            <p>No @Schema.DisplayNamePlural.ToLower() yet.</p>
+            @if (ToolbarActions.Any())
+            {
+                <ActionButton Action="@ToolbarActions.First()" OnExecuted="Reload" Variant="primary" />
+            }
+        </div>
+    }
+    else
+    {
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        @foreach (var col in VisibleColumns)
+                        {
+                            <th class="@(col.IsSortable ? "sortable" : "")"
+                                @onclick="() => Sort(col.FieldName)">
+                                @col.DisplayName
+                                @if (_sortField == col.FieldName)
+                                {
+                                    <Icon Name="@(_sortAsc ? "chevron-up" : "chevron-down")" Size="14" />
+                                }
+                            </th>
+                        }
+                        @if (RowActions.Any())
+                        {
+                            <th class="actions-col"></th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in _rows)
+                    {
+                        <tr class="data-row" @onclick="() => NavigateToDetail(row)">
+                            @foreach (var col in VisibleColumns)
+                            {
+                                <td>
+                                    <CellValue Field="@col" Row="@row" />
+                                </td>
+                            }
+                            @if (RowActions.Any())
+                            {
+                                <td class="actions-cell" @onclick:stopPropagation="true">
+                                    <div class="row-actions">
+                                        @foreach (var action in RowActions)
+                                        {
+                                            @if (Permissions.Has(action.RequiredPermission ?? ""))
+                                            {
+                                                <ActionButton Action="@action"
+                                                             EntityId="@GetId(row)"
+                                                             OnExecuted="Reload"
+                                                             Size="sm" />
+                                            }
+                                        }
+                                    </div>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <!-- Fix 2: Pagination controls -->
+    @if (_page > 1 || _rows.Count == _pageSize)
+    {
+        <div class="list-pagination">
+            <button class="btn btn-ghost btn-sm" @onclick="PrevPage" disabled="@(_page == 1)">
+                <Icon Name="chevron-left" Size="14" /> Previous
+            </button>
+            <span class="pagination-info">Page @_page</span>
+            <button class="btn btn-ghost btn-sm" @onclick="NextPage" disabled="@(_rows.Count < _pageSize)">
+                Next <Icon Name="chevron-right" Size="14" />
+            </button>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EntitySchema Schema { get; set; } = null!;
+
+    private List<JsonElement> _rows = new();
+    private bool _loading = true;
+    private string? _sortField;
+    private bool _sortAsc = true;
+    // Fix 2: Pagination state
+    private int _page     = 1;
+    private int _pageSize = 50;
+
+    // BUG FIX #6: IReadOnlyList<string> does not expose IndexOf — that method lives on
+    // IList<T> and List<T>. Calling it caused a compile error. Use a safe Enumerable-based
+    // lookup instead; ToList() materialises the DefaultListColumns into a List<string>
+    // which does have IndexOf, and returns -1 (sorted last) for any field not in the list.
+    private IEnumerable<FieldDefinition> VisibleColumns =>
+        Schema.Fields
+            .Where(f => f.ShowInList && Schema.DefaultListColumns.Contains(f.FieldName))
+            .OrderBy(f => Schema.DefaultListColumns.ToList().IndexOf(f.FieldName));
+
+    private IEnumerable<ActionDefinition> ToolbarActions =>
+        Schema.Actions.Where(a => a.Placement == ActionPlacement.Toolbar);
+
+    private IEnumerable<ActionDefinition> RowActions =>
+        Schema.Actions.Where(a => a.Placement == ActionPlacement.Row);
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _loading = true;
+        _rows = await Api.GetListAsync($"{Schema.ApiBasePath}?page={_page}&pageSize={_pageSize}") ?? new();
+        _loading = false;
+    }
+
+    private async Task PrevPage() { if (_page > 1) { _page--; await Reload(); } }
+    private async Task NextPage() { if (_rows.Count == _pageSize) { _page++; await Reload(); } }
+
+    private void Sort(string field)
+    {
+        if (_sortField == field) _sortAsc = !_sortAsc;
+        else { _sortField = field; _sortAsc = true; }
+    }
+
+    private void NavigateToDetail(JsonElement row)
+    {
+        var id = GetId(row);
+        if (id != null) Nav.NavigateTo($"/entity/{Schema.EntityType}/{id}");
+    }
+
+    private string? GetId(JsonElement row) =>
+        row.TryGetProperty("id", out var idProp) ? idProp.ToString() : null;
+}

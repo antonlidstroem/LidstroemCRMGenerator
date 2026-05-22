@@ -1,0 +1,37 @@
+{
+  "pluginKey": "FieldReports",
+  "displayName": "Field Reports",
+  "description": "Meeting notes and visit reports linked to activities and projects via polymorphic IDs.",
+  "version": "1.0.0",
+  "routePrefix": "fieldreports",
+  "entities": [
+    {
+      "name": "FieldReport",
+      "hasGdprHandler": true,
+      "hasLinkResolver": false,
+      "hasExtensionProvider": ["Activity", "Actor"],
+      "polymorphicRelations": [
+        { "field": "ActivityId+ActivityType", "allowedTypes": ["Activity"] },
+        { "field": "ContextId+ContextType",   "allowedTypes": ["Project"] }
+      ],
+      "fields": [
+        { "name": "Title",         "type": "Text",     "required": true, "maxLength": 300 },
+        { "name": "Content",       "type": "RichText", "required": true },
+        { "name": "AuthorActorId", "type": "FK",       "required": true, "relatedTo": "Actor" },
+        { "name": "ActivityId",    "type": "FK",       "required": false },
+        { "name": "ActivityType",  "type": "Text",     "required": false, "allowedValues": ["Activity"] },
+        { "name": "ContextId",     "type": "FK",       "required": false },
+        { "name": "ContextType",   "type": "Text",     "required": false, "allowedValues": ["Project"] }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "FieldReports.View",   "category": "FieldReports" },
+    { "name": "FieldReports.Create", "category": "FieldReports" },
+    { "name": "FieldReports.Edit",   "category": "FieldReports" },
+    { "name": "FieldReports.Delete", "category": "FieldReports" }
+  ],
+  "navGroup": "Work Management",
+  "navOrder": 40,
+  "optionallyExtends": ["Activity", "Actor"]
+}

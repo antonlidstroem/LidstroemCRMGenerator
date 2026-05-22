@@ -1,0 +1,42 @@
+@* FocusLayout — minimal, command-palette driven *@
+@using Lidstroem.Frontend.Core.Services
+@inherits LayoutComponentBase
+@inject AppState State
+@inject AuthService Auth
+@inject NavigationManager Nav
+
+<div class="focus-shell">
+    <header class="focus-topbar">
+        <div class="focus-brand">
+            @if (State.SiteConfig?.LogoUrl != null)
+            {
+                <img src="@State.SiteConfig.LogoUrl" alt="@State.SiteConfig?.SiteName" class="focus-logo" />
+            }
+            else
+            {
+                <span class="focus-wordmark">@(State.SiteConfig?.SiteName ?? "Lidstroem")</span>
+            }
+        </div>
+        <div class="focus-topbar-end">
+            <button class="cmd-palette-trigger" @onclick="OpenCommandPalette">
+                <span>Search</span>
+                <kbd>⌘K</kbd>
+            </button>
+            <button @onclick="Logout" class="focus-signout">Sign out</button>
+        </div>
+    </header>
+
+    <main class="focus-content">
+        @Body
+    </main>
+</div>
+
+@code {
+    private void OpenCommandPalette() { /* TODO: CommandPalette component */ }
+
+    private async Task Logout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+}

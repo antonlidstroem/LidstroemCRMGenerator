@@ -1,0 +1,403 @@
+@page "/admin/tenants/{Id:int}"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+
+<PageTitle>@(_name ?? "Tenant")</PageTitle>
+
+@if (!Permissions.Has("SuperAdmin.ManageTenants"))
+{
+    <div class="empty-state"><p>You do not have permission to manage tenants.</p></div>
+    return;
+}
+
+@if (_loading)
+{
+    <div class="loading-indicator">Loading…</div>
+    return;
+}
+
+@if (_tenant == null)
+{
+    <div class="empty-state"><p>Tenant not found.</p></div>
+    return;
+}
+
+<div class="page-header">
+    <div class="breadcrumb-back">
+        <button class="btn btn-ghost btn-sm" @onclick='() => Nav.NavigateTo("/admin/tenants")'>
+            ← Tenants
+        </button>
+    </div>
+    <h1 class="page-title">@_name</h1>
+    @if (_isActive)
+    {
+        <span class="badge badge-green">Active</span>
+    }
+    else
+    {
+        <span class="badge badge-grey">Inactive</span>
+    }
+</div>
+
+<div class="detail-grid">
+
+    {{!-- ── General information ──────────────────────────────────────────── --}}
+    <section class="detail-section">
+        <h2 class="section-title">General information</h2>
+
+        <div class="form-field">
+            <label class="field-label">Name <span class="required">*</span></label>
+            <input class="field-input" @bind="_editName" />
+        </div>
+        <div class="form-field">
+            <label class="field-label">Contact email</label>
+            <input class="field-input" type="email" @bind="_editEmail" placeholder="contact@example.com" />
+        </div>
+        <div class="form-field">
+            <label class="field-label">Description</label>
+            <textarea class="field-input" @bind="_editDescription" rows="3"></textarea>
+        </div>
+        <div class="form-field">
+            <label class="field-label">Actor quota</label>
+            <input class="field-input" type="number" @bind="_editActorQuota"
+                   placeholder="Unlimited" min="1" max="100000" />
+        </div>
+
+        @if (_saveError != null)
+        {
+            <div class="form-error">@_saveError</div>
+        }
+        @if (_saveSuccess)
+        {
+            <div class="form-success">Changes saved.</div>
+        }
+
+        <div class="form-actions">
+            <button class="btn btn-primary"
+                    @onclick="SaveGeneral"
+                    disabled="@(_busy || string.IsNullOrWhiteSpace(_editName))">
+                @(_busy ? "Saving…" : "Save changes")
+            </button>
+            @if (_isActive)
+            {
+                <button class="btn btn-ghost" @onclick="() => ToggleActive(false)" disabled="@_busy">
+                    Deactivate tenant
+                </button>
+            }
+            else
+            {
+                <button class="btn btn-ghost" @onclick="() => ToggleActive(true)" disabled="@_busy">
+                    Activate tenant
+                </button>
+            }
+        </div>
+    </section>
+
+    {{!-- ── Plugin management ────────────────────────────────────────────── --}}
+    <section class="detail-section">
+        <h2 class="section-title">Plugins</h2>
+        <p class="section-description">
+            Toggle which data plugins are available for this tenant. Changes take effect immediately.
+        </p>
+
+        @if (_allPlugins.Count == 0)
+        {
+            <p class="muted">No plugins registered.</p>
+        }
+        else
+        {
+            <div class="plugin-grid">
+                @foreach (var plugin in _allPlugins)
+                {
+                    var key = plugin.Key;
+                    var enabled = _enabledPlugins.Contains(key);
+                    var toggling = _togglingPlugins.Contains(key);
+
+                    <div class="plugin-card @(enabled ? "plugin-card--enabled" : "")">
+                        <div class="plugin-card-info">
+                            <span class="plugin-card-name">@plugin.DisplayName</span>
+                            @if (!string.IsNullOrEmpty(plugin.Description))
+                            {
+                                <span class="plugin-card-desc">@plugin.Description</span>
+                            }
+                        </div>
+                        <button class="toggle @(enabled ? "toggle--on" : "toggle--off")"
+                                @onclick="() => TogglePlugin(key, !enabled)"
+                                disabled="@toggling"
+                                title="@(enabled ? "Disable" : "Enable")">
+                            <span class="toggle-knob"></span>
+                        </button>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    {{!-- ── Custom pages ──────────────────────────────────────────────────── --}}
+    <section class="detail-section">
+        <h2 class="section-title">Custom pages</h2>
+        <p class="section-description">
+            Activate specialised UI pages for this tenant. Each page appears automatically
+            in the tenant's navigation menu when enabled.
+        </p>
+
+        @if (_allCustomPages.Count == 0)
+        {
+            <p class="muted">No custom pages are installed.</p>
+        }
+        else
+        {
+            @* Group by NavGroup for a clearer overview *@
+            @foreach (var group in _customPageGroups)
+            {
+                @if (group.GroupName != null)
+                {
+                    <div class="plugin-group-label">@group.GroupName</div>
+                }
+
+                <div class="plugin-grid">
+                    @foreach (var cp in group.Pages)
+                    {
+                        var key = cp.PageKey;
+                        var enabled = _enabledCustomPages.Contains(key);
+                        var toggling = _togglingCustomPages.Contains(key);
+
+                        <div class="plugin-card @(enabled ? "plugin-card--enabled" : "")">
+                            <div class="plugin-card-info">
+                                <span class="plugin-card-name">
+                                    @if (cp.Icon != null)
+                                    {
+                                        <Icon Name="@cp.Icon" Size="14" />
+                                    }
+                                    @cp.DisplayName
+                                </span>
+                                <span class="plugin-card-desc muted-small">@cp.Route</span>
+                                @if (!string.IsNullOrEmpty(cp.Description))
+                                {
+                                    <span class="plugin-card-desc">@cp.Description</span>
+                                }
+                            </div>
+                            <button class="toggle @(enabled ? "toggle--on" : "toggle--off")"
+                                    @onclick="() => ToggleCustomPage(key, !enabled)"
+                                    disabled="@toggling"
+                                    title="@(enabled ? "Disable" : "Enable")">
+                                <span class="toggle-knob"></span>
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    </section>
+
+</div>
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private JsonElement? _tenant;
+    private bool _loading = true;
+    private bool _busy;
+    private string? _saveError;
+    private bool _saveSuccess;
+
+    // General info
+    private string _name = string.Empty;
+    private string _editName = string.Empty;
+    private string _editEmail = string.Empty;
+    private string _editDescription = string.Empty;
+    private int? _editActorQuota;
+    private bool _isActive;
+
+    // Plugins
+    private List<PluginEntry> _allPlugins = new();
+    private HashSet<string> _enabledPlugins = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _togglingPlugins = new(StringComparer.OrdinalIgnoreCase);
+
+    // Custom pages
+    private List<CustomPageEntry> _allCustomPages = new();
+    private List<CustomPageGroup> _customPageGroups = new();
+    private HashSet<string> _enabledCustomPages = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _togglingCustomPages = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Task.WhenAll(LoadTenantAsync(), LoadPluginsAsync(), LoadCustomPagesAsync());
+        BuildCustomPageGroups();
+        _loading = false;
+    }
+
+    private async Task LoadTenantAsync()
+    {
+        var result = await Api.GetOneAsync($"/api/admin/tenants/{Id}");
+        if (result == null) return;
+
+        _tenant = result;
+        _name = Str(result.Value, "name");
+        _editName = _name;
+        _editEmail = Str(result.Value, "contactEmail");
+        _editDescription = Str(result.Value, "description");
+        _isActive = Bool(result.Value, "isActive");
+
+        if (result.Value.TryGetProperty("actorQuota", out var q) && q.ValueKind != JsonValueKind.Null)
+            _editActorQuota = q.GetInt32();
+
+        _enabledPlugins.Clear();
+        if (result.Value.TryGetProperty("pluginAssignments", out var plugins))
+            foreach (var a in plugins.EnumerateArray())
+                if (Bool(a, "isEnabled"))
+                    _enabledPlugins.Add(Str(a, "pluginKey"));
+
+        _enabledCustomPages.Clear();
+        if (result.Value.TryGetProperty("customPages", out var pages))
+            foreach (var p in pages.EnumerateArray())
+                if (Bool(p, "isEnabled"))
+                    _enabledCustomPages.Add(Str(p, "pageKey"));
+    }
+
+    private async Task LoadPluginsAsync()
+    {
+        var manifest = await Api.GetOneAsync("/api/plugin-manifest");
+        if (manifest == null) return;
+
+        _allPlugins.Clear();
+        if (manifest.Value.TryGetProperty("registeredPlugins", out var plugins))
+            foreach (var p in plugins.EnumerateArray())
+            {
+                var key = Str(p, "pluginKey");
+                if (!string.IsNullOrEmpty(key))
+                    _allPlugins.Add(new PluginEntry(
+                        key,
+                        StrOr(p, "displayName", key),
+                        Str(p, "description")));
+            }
+
+        _allPlugins = _allPlugins.OrderBy(p => p.DisplayName).ToList();
+    }
+
+    private async Task LoadCustomPagesAsync()
+    {
+        var result = await Api.GetListAsync("/api/admin/tenants/custom-pages/available");
+        if (result == null) return;
+
+        _allCustomPages.Clear();
+        foreach (var p in result)
+        {
+            var key = Str(p, "pageKey");
+            if (!string.IsNullOrEmpty(key))
+                _allCustomPages.Add(new CustomPageEntry(
+                    key,
+                    StrOr(p, "displayName", key),
+                    Str(p, "description"),
+                    Str(p, "route"),
+                    NullStr(p, "navGroup"),
+                    p.TryGetProperty("navOrder", out var o) ? o.GetInt32() : 100,
+                    NullStr(p, "icon")));
+        }
+    }
+
+    private void BuildCustomPageGroups()
+    {
+        _customPageGroups = _allCustomPages
+            .GroupBy(p => p.NavGroup)
+            .OrderBy(g => g.Key ?? string.Empty)
+            .Select(g => new CustomPageGroup(
+                g.Key,
+                g.OrderBy(p => p.NavOrder).ToList()))
+            .ToList();
+    }
+
+    private async Task SaveGeneral()
+    {
+        if (string.IsNullOrWhiteSpace(_editName)) return;
+        _busy = true;
+        _saveError = null;
+        _saveSuccess = false;
+
+        var dto = new
+        {
+            Name = _editName.Trim(),
+            ContactEmail = string.IsNullOrWhiteSpace(_editEmail) ? null : _editEmail.Trim(),
+            Description = string.IsNullOrWhiteSpace(_editDescription) ? null : _editDescription.Trim(),
+            ActorQuota = _editActorQuota
+        };
+
+        var ok = await Api.PutAsync($"/api/admin/tenants/{Id}", dto);
+        _busy = false;
+
+        if (!ok)
+        {
+            _saveError = "Failed to save. The name may already be in use.";
+            return;
+        }
+
+        _name = _editName.Trim();
+        _saveSuccess = true;
+        _ = Task.Delay(3000).ContinueWith(_ => { _saveSuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task ToggleActive(bool activate)
+    {
+        _busy = true;
+        var url = activate
+            ? $"/api/admin/tenants/{Id}/activate"
+            : $"/api/admin/tenants/{Id}/deactivate";
+        await Api.PutAsync(url, new { });
+        _isActive = activate;
+        _busy = false;
+    }
+
+    private async Task TogglePlugin(string key, bool enable)
+    {
+        _togglingPlugins.Add(key);
+        StateHasChanged();
+        var url = enable
+            ? $"/api/admin/tenants/{Id}/plugins/{Uri.EscapeDataString(key)}/enable"
+            : $"/api/admin/tenants/{Id}/plugins/{Uri.EscapeDataString(key)}/disable";
+        if (await Api.PutAsync(url, new { }))
+        {
+            if (enable) _enabledPlugins.Add(key);
+            else _enabledPlugins.Remove(key);
+        }
+        _togglingPlugins.Remove(key);
+        StateHasChanged();
+    }
+
+    private async Task ToggleCustomPage(string key, bool enable)
+    {
+        _togglingCustomPages.Add(key);
+        StateHasChanged();
+        var url = enable
+            ? $"/api/admin/tenants/{Id}/custom-pages/{Uri.EscapeDataString(key)}/enable"
+            : $"/api/admin/tenants/{Id}/custom-pages/{Uri.EscapeDataString(key)}/disable";
+        if (await Api.PutAsync(url, new { }))
+        {
+            if (enable) _enabledCustomPages.Add(key);
+            else _enabledCustomPages.Remove(key);
+        }
+        _togglingCustomPages.Remove(key);
+        StateHasChanged();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string Str(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var p) ? p.GetString() ?? string.Empty : string.Empty;
+
+    private static string StrOr(JsonElement el, string prop, string fallback) =>
+        el.TryGetProperty(prop, out var p) ? p.GetString() ?? fallback : fallback;
+
+    private static string? NullStr(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var p) ? p.GetString() : null;
+
+    private static bool Bool(JsonElement el, string prop) =>
+        el.TryGetProperty(prop, out var p) && p.GetBoolean();
+
+    private record PluginEntry(string Key, string DisplayName, string Description);
+    private record CustomPageEntry(string PageKey, string DisplayName, string Description,
+        string Route, string? NavGroup, int NavOrder, string? Icon);
+    private record CustomPageGroup(string? GroupName, List<CustomPageEntry> Pages);
+}

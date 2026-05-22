@@ -1,0 +1,18 @@
+{
+  "pluginKey": "GDPR",
+  "displayName": "GDPR",
+  "description": "Orchestrates GDPR forget operations. Discovers and runs all IGdprHandler implementations.",
+  "version": "1.0.0",
+  "routePrefix": "gdpr",
+  "entities": [
+    { "name": "GdprLog", "hasGdprHandler": false, "hasLinkResolver": false }
+  ],
+  "permissions": [
+    { "name": "GDPR.Forget",  "category": "GDPR" },
+    { "name": "GDPR.ViewLog", "category": "GDPR" }
+  ],
+  "listensToEvents": [],
+  "publishesEvents": ["ActorForgottenEvent"],
+  "navGroup": null,
+  "navOrder": 990
+}

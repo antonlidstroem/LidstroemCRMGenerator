@@ -1,0 +1,159 @@
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Shared
+@inherits LayoutComponentBase
+@inject SchemaService Schema
+@inject AuthService Auth
+@inject PermissionService Permissions
+@inject AppState State
+@inject CustomPageRegistry CustomPages
+@inject ReportService Reports
+@inject NavigationManager Nav
+
+<div class="clarity-shell @(_sidebarOpen ? "sidebar-open" : "")">
+
+    <aside class="clarity-sidebar">
+        <div class="sidebar-header">
+            @if (State.SiteConfig?.LogoUrl != null)
+            {
+                <img src="@State.SiteConfig.LogoUrl" alt="@State.SiteConfig.SiteName" class="sidebar-logo" />
+            }
+            else
+            {
+                <span class="sidebar-wordmark">@(State.SiteConfig?.SiteName ?? "Lidstroem")</span>
+            }
+        </div>
+
+        <nav class="sidebar-nav">
+            <NavItem Href="/dashboard" Icon="home" Label="Dashboard" />
+
+            @foreach (var group in _navGroups)
+            {
+                @if (group.Name != null)
+                {
+                    <div class="nav-group-label">@group.Name</div>
+                }
+                @foreach (var item in group.Items)
+                {
+                    <NavItem Href="@item.Href" Icon="@item.Icon" Label="@item.Label" />
+                }
+            }
+
+            @if (Permissions.Has("SuperAdmin.ManageTenants"))
+            {
+                <div class="nav-group-label">Administration</div>
+                <NavItem Href="/admin/tenants" Icon="building-2" Label="Tenants" />
+            }
+        </nav>
+
+        <div class="sidebar-footer">
+            <RealtimeStatusBadge />
+            <button class="sidebar-actor-btn" @onclick="Logout">
+                <span class="actor-avatar">@GetInitials()</span>
+                <span class="actor-info">
+                    <span class="actor-name">Account</span>
+                    <span class="actor-action">Sign out</span>
+                </span>
+            </button>
+        </div>
+    </aside>
+
+    <div class="sidebar-overlay" @onclick="ToggleSidebar"></div>
+
+    <div class="clarity-main">
+        <header class="clarity-topbar">
+            <button class="topbar-menu-btn" @onclick="ToggleSidebar">
+                <Icon Name="menu" />
+            </button>
+            <div class="topbar-breadcrumb">
+                <BreadcrumbTrail />
+            </div>
+        </header>
+
+        <main class="clarity-content">
+            @Body
+        </main>
+    </div>
+</div>
+
+@code {
+    private List<NavGroupVm> _navGroups = new();
+    private bool _sidebarOpen;
+
+    protected override async Task OnInitializedAsync() => await BuildNavAsync();
+
+    private async Task BuildNavAsync()
+    {
+        // Load all three nav sources in parallel
+        var schemasTask = Schema.GetNavGroupsAsync();
+        var reportsTask = Reports.GetAvailableAsync();
+        await Task.WhenAll(schemasTask, reportsTask);
+
+        var schemaGroups = schemasTask.Result;
+        var reportItems  = reportsTask.Result;
+        var customItems  = CustomPages.All;
+
+        var merged = new Dictionary<string?, List<NavItemVm>>(
+            StringComparer.OrdinalIgnoreCase);
+
+        // 1. Schema entities
+        foreach (var group in schemaGroups)
+        {
+            var items = GetOrCreate(merged, group.Name);
+            foreach (var s in group.Schemas)
+                items.Add(new NavItemVm(
+                    $"/entity/{s.EntityType}", s.Icon, s.DisplayNamePlural, s.NavOrder));
+        }
+
+        // 2. Custom pages
+        foreach (var cp in customItems)
+        {
+            var items = GetOrCreate(merged, cp.NavGroup);
+            items.Add(new NavItemVm(cp.Route, cp.Icon, cp.DisplayName, cp.NavOrder));
+        }
+
+        // 3. Reports — each gets a link to /reports/{key}, grouped by NavGroup
+        foreach (var r in reportItems)
+        {
+            var groupKey = string.IsNullOrEmpty(r.NavGroup) ? "Reports" : r.NavGroup;
+            var items = GetOrCreate(merged, groupKey);
+            items.Add(new NavItemVm(
+                $"/reports/{Uri.EscapeDataString(r.ReportKey)}",
+                "bar-chart-2",
+                r.DisplayName,
+                r.NavOrder));
+        }
+
+        _navGroups = merged
+            .OrderBy(kvp => kvp.Key ?? string.Empty)
+            .Select(kvp => new NavGroupVm(
+                kvp.Key,
+                kvp.Value.OrderBy(i => i.NavOrder).ToList()))
+            .ToList();
+    }
+
+    private void ToggleSidebar() => _sidebarOpen = !_sidebarOpen;
+
+    private async Task Logout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+
+    private string GetInitials() =>
+        Auth.ActorId.HasValue ? $"#{Auth.ActorId % 100}" : "?";
+
+    private static List<NavItemVm> GetOrCreate(
+        Dictionary<string?, List<NavItemVm>> dict, string? key)
+    {
+        if (!dict.TryGetValue(key, out var list))
+        {
+            list = new List<NavItemVm>();
+            dict[key] = list;
+        }
+        return list;
+    }
+
+    private record NavItemVm(string Href, string? Icon, string Label, int NavOrder);
+    private record NavGroupVm(string? Name, List<NavItemVm> Items);
+}

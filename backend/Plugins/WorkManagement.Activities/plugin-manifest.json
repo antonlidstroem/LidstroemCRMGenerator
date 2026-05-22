@@ -1,0 +1,34 @@
+{
+  "pluginKey": "WorkManagement.Activities",
+  "displayName": "Activities",
+  "description": "Manages activities. Every activity must belong to exactly one Project. Activities can have donations.",
+  "version": "1.0.0",
+  "routePrefix": "activities",
+  "entities": [
+    {
+      "name": "Activity",
+      "hasGdprHandler": false,
+      "hasLinkResolver": true,
+      "hasExtensionProvider": ["Project"],
+      "fields": [
+        { "name": "Title",       "type": "Text",     "required": true, "maxLength": 300 },
+        { "name": "Description", "type": "RichText", "required": false },
+        { "name": "ProjectId",   "type": "FK",       "required": true, "relatedTo": "Project" },
+        { "name": "StartDate",   "type": "DateTime", "required": false },
+        { "name": "EndDate",     "type": "DateTime", "required": false }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "Activities.View",   "category": "Activities" },
+    { "name": "Activities.Create", "category": "Activities" },
+    { "name": "Activities.Edit",   "category": "Activities" },
+    { "name": "Activities.Delete", "category": "Activities" }
+  ],
+  "listensToEvents": [],
+  "publishesEvents": [],
+  "navGroup": "Work Management",
+  "navOrder": 30,
+  "dependsOn": [],
+  "optionallyExtends": ["Project"]
+}

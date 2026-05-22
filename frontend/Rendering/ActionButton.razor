@@ -1,0 +1,91 @@
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject NavigationManager Nav
+@inject PermissionService Permissions
+@inject IJSRuntime JS
+
+@if (_visible)
+{
+    <button class="btn btn-@Variant btn-@Size @_busyClass"
+            @onclick="ExecuteAsync"
+            disabled="@_busy"
+            title="@Action.DisplayName">
+        @if (_busy)
+        {
+            <span class="btn-spinner"></span>
+        }
+        else if (Action.Icon != null)
+        {
+            <Icon Name="@Action.Icon" Size="@(Size == "sm" ? 14 : 16)" />
+        }
+        <span class="btn-label">@Action.DisplayName</span>
+    </button>
+}
+
+@code {
+    [Parameter, EditorRequired] public ActionDefinition Action { get; set; } = null!;
+    [Parameter] public string? EntityId { get; set; }
+    [Parameter] public EventCallback OnExecuted { get; set; }
+    [Parameter] public string Variant { get; set; } = "ghost";
+    [Parameter] public string Size { get; set; } = "md";
+
+    private bool _busy;
+    private bool _visible = true;
+    private string _busyClass => _busy ? "btn-busy" : string.Empty;
+
+    protected override void OnParametersSet()
+    {
+        _visible = Permissions.Has(Action.RequiredPermission ?? string.Empty);
+    }
+
+    private async Task ExecuteAsync()
+    {
+        if (_busy) return;
+        _busy = true;
+
+        try
+        {
+            var url = ResolveUrl();
+
+            // Navigation actions (edit)
+            if (Action.ActionKey == "edit" || Action.HttpMethod == "GET")
+            {
+                Nav.NavigateTo(url);
+                return;
+            }
+
+            // Fix 4: Replace the placeholder Task.FromResult(true) with a real
+            // browser confirm dialog via JS interop. This is still a TODO for a
+            // proper modal component, but at least prevents accidental deletes.
+            if (Action.HttpMethod == "DELETE" ||
+                Action.ActionKey.Contains("delete", StringComparison.OrdinalIgnoreCase) ||
+                Action.ActionKey.Contains("forget", StringComparison.OrdinalIgnoreCase))
+            {
+                var confirmed = await JS.InvokeAsync<bool>(
+                    "confirm",
+                    $"Are you sure you want to {Action.DisplayName.ToLower()}? This cannot be undone.");
+                if (!confirmed) return;
+            }
+
+            bool success = Action.HttpMethod switch
+            {
+                "POST"   => (await Api.PostAsync(url, new { })).HasValue,
+                "PUT"    => await Api.PutAsync(url, new { }),
+                "PATCH"  => await Api.PatchAsync(url, new { }),
+                "DELETE" => await Api.DeleteAsync(url),
+                _        => false
+            };
+
+            if (success)
+                await OnExecuted.InvokeAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private string ResolveUrl() =>
+        Action.UrlTemplate.Replace("{id}", EntityId ?? string.Empty);
+}

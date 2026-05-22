@@ -1,0 +1,169 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Rendering.Fields
+@using Lidstroem.Frontend.Rendering.Extensions
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+
+<div class="entity-detail-page">
+    @if (_loading)
+    {
+        <div class="detail-skeleton"></div>
+    }
+    else if (_data == null)
+    {
+        <div class="detail-not-found">
+            <Icon Name="alert-circle" Size="48" />
+            <h2>Not found</h2>
+            <p>This @Schema.DisplayName does not exist.</p>
+            <button class="btn btn-ghost" @onclick="GoBack">Go back</button>
+        </div>
+    }
+    else
+    {
+        <div class="page-header">
+            <button class="back-btn" @onclick="GoBack">
+                <Icon Name="arrow-left" Size="16" />
+                @Schema.DisplayNamePlural
+            </button>
+            <div class="page-header-actions">
+                @foreach (var action in FormActions)
+                {
+                    @if (Permissions.Has(action.RequiredPermission ?? ""))
+                    {
+                        <ActionButton Action="@action"
+                                     EntityId="@Id"
+                                     OnExecuted="@(async () => { _lastExecutedAction = action; await HandleActionExecuted(); })" />
+                    }
+                }
+            </div>
+        </div>
+
+        <div class="detail-layout">
+            <!-- Main entity data -->
+            <div class="detail-main">
+                <div class="detail-card">
+                    <div class="detail-card-header">
+                        <Icon Name="@Schema.Icon" Size="20" />
+                        <h2>@GetDisplayTitle()</h2>
+                        <a href="/entity/@Schema.EntityType/@Id/edit" class="btn btn-ghost btn-sm">
+                            <Icon Name="edit" Size="14" />
+                            Edit
+                        </a>
+                    </div>
+
+                    <dl class="detail-fields">
+                        @foreach (var field in DetailFields)
+                        {
+                            <div class="detail-field">
+                                <dt class="field-label">@field.DisplayName</dt>
+                                <dd class="field-value">
+                                    <CellValue Field="@field" Row="@_data.Value" />
+                                </dd>
+                            </div>
+                        }
+                    </dl>
+                </div>
+            </div>
+
+            <!-- Extensions panel -->
+            @if (_extensions.Count > 0)
+            {
+                <div class="detail-extensions">
+                    @foreach (var ext in _extensions)
+                    {
+                        <ExtensionPanel Key="@ext.Key" Data="@ext.Value" />
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EntitySchema Schema { get; set; } = null!;
+    [Parameter, EditorRequired] public string Id { get; set; } = string.Empty;
+
+    private JsonElement? _data;
+    private Dictionary<string, JsonElement> _extensions = new();
+    private bool _loading = true;
+
+    private IEnumerable<FieldDefinition> DetailFields =>
+        Schema.Fields.Where(f => f.ShowInForm).OrderBy(f => f.SortOrder);
+
+    private IEnumerable<ActionDefinition> FormActions =>
+        Schema.Actions.Where(a => a.Placement == ActionPlacement.Form
+                               || a.Placement == ActionPlacement.Row);
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _extensions.Clear();
+
+        var response = await Api.GetOneAsync($"{Schema.ApiBasePath}/{Id}");
+
+        if (response.HasValue)
+        {
+            var root = response.Value;
+
+            // Unwrap { Data, Extensions } envelope if present
+            if (root.TryGetProperty("data", out var dataEl))
+            {
+                _data = dataEl;
+                if (root.TryGetProperty("extensions", out var extsEl))
+                {
+                    foreach (var ext in extsEl.EnumerateObject())
+                        _extensions[ext.Name] = ext.Value;
+                }
+            }
+            else
+            {
+                _data = root;
+            }
+        }
+
+        _loading = false;
+    }
+
+    // Fix 7: The original code always navigated to the list view after any action.
+    // For non-destructive actions (publish, mark-answered, etc.) the user expects
+    // to stay on the detail page and see the refreshed state. Only navigate away
+    // for DELETE/gdpr-forget actions; for everything else, reload the detail.
+    private async Task HandleActionExecuted()
+    {
+        var lastAction = _lastExecutedAction;
+        if (lastAction != null &&
+            (lastAction.HttpMethod == "DELETE" ||
+             lastAction.ActionKey.Contains("delete", StringComparison.OrdinalIgnoreCase) ||
+             lastAction.ActionKey.Contains("forget", StringComparison.OrdinalIgnoreCase)))
+        {
+            Nav.NavigateTo($"/entity/{Schema.EntityType}");
+        }
+        else
+        {
+            await LoadAsync();
+        }
+    }
+
+    private ActionDefinition? _lastExecutedAction;
+
+    private string GetDisplayTitle()
+    {
+        if (_data == null) return Schema.DisplayName;
+
+        // Try common display field names in priority order
+        foreach (var candidate in new[] { "displayName", "title", "name", "email" })
+        {
+            if (_data.Value.TryGetProperty(candidate, out var prop))
+                return prop.GetString() ?? Schema.DisplayName;
+        }
+
+        return $"{Schema.DisplayName} #{Id}";
+    }
+
+    private void GoBack() => Nav.NavigateTo($"/entity/{Schema.EntityType}");
+}

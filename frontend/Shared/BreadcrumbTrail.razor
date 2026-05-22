@@ -1,0 +1,47 @@
+@inject NavigationManager Nav
+@inject Lidstroem.Frontend.Core.Services.SchemaService Schema
+
+<nav class="breadcrumb" aria-label="Breadcrumb">
+    <a href="/dashboard" class="breadcrumb-item">Home</a>
+
+    @foreach (var crumb in _crumbs)
+    {
+        <span class="breadcrumb-sep">›</span>
+        @if (crumb.Href != null)
+        {
+            <a href="@crumb.Href" class="breadcrumb-item">@crumb.Label</a>
+        }
+        else
+        {
+            <span class="breadcrumb-item breadcrumb-item--current">@crumb.Label</span>
+        }
+    }
+</nav>
+
+@code {
+    private List<(string Label, string? Href)> _crumbs = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _crumbs.Clear();
+        var uri = new Uri(Nav.Uri);
+        var segments = uri.AbsolutePath.Trim('/').Split('/');
+
+        // /entity/{EntityType}/{id?}
+        if (segments.Length >= 2 && segments[0] == "entity")
+        {
+            var entityType = segments[1];
+            var schema = await Schema.GetAsync(entityType);
+            var pluralName = schema?.DisplayNamePlural ?? entityType;
+            var singleName = schema?.DisplayName ?? entityType;
+
+            _crumbs.Add((pluralName, $"/entity/{entityType}"));
+
+            if (segments.Length >= 3)
+            {
+                var id = segments[2];
+                _crumbs.Add((id == "new" ? $"New {singleName}" : $"#{id}", null));
+            }
+        }
+    }
+}

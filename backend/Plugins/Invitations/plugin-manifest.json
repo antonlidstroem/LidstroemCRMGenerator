@@ -1,0 +1,16 @@
+{
+  "pluginKey": "Invitations",
+  "displayName": "Invitations",
+  "description": "Invites new actors via email. On accept, creates Actor + ActorCredentials.",
+  "version": "1.0.0",
+  "routePrefix": "invitations",
+  "entities": [
+    { "name": "Invitation", "hasGdprHandler": false, "hasLinkResolver": false }
+  ],
+  "permissions": [
+    { "name": "Invitations.Send", "category": "Users" },
+    { "name": "Invitations.View", "category": "Users" }
+  ],
+  "navGroup": null,
+  "navOrder": 600
+}

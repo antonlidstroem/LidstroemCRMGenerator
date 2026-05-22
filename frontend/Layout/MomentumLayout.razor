@@ -1,0 +1,67 @@
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Core.Models
+@inherits LayoutComponentBase
+@inject SchemaService Schema
+@inject AuthService Auth
+@inject AppState State
+@inject CustomPageRegistry CustomPages
+@inject NavigationManager Nav
+
+<div class="momentum-shell">
+    <header class="momentum-topbar">
+        <div class="momentum-brand">
+            @if (State.SiteConfig?.LogoUrl != null)
+            {
+                <img src="@State.SiteConfig.LogoUrl" alt="@State.SiteConfig?.SiteName" class="topbar-logo" />
+            }
+            else
+            {
+                <span class="topbar-wordmark">@(State.SiteConfig?.SiteName ?? "Lidstroem")</span>
+            }
+        </div>
+
+        <nav class="momentum-nav">
+            <a href="/dashboard" class="momentum-nav-link">Dashboard</a>
+            @foreach (var item in _navItems)
+            {
+                <a href="@item.Href" class="momentum-nav-link">@item.Label</a>
+            }
+        </nav>
+
+        <div class="momentum-topbar-end">
+            <button @onclick="Logout" class="topbar-signout">Sign out</button>
+        </div>
+    </header>
+
+    <main class="momentum-content">
+        @Body
+    </main>
+</div>
+
+@code {
+    private List<NavItemVm> _navItems = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var schemas = await Schema.GetAllAsync();
+
+        // Merge schema entities + custom pages, sorted by NavOrder
+        var items = new List<NavItemVm>();
+
+        foreach (var s in schemas.Values)
+            items.Add(new NavItemVm($"/entity/{s.EntityType}", s.DisplayNamePlural, s.NavOrder));
+
+        foreach (var cp in CustomPages.All)
+            items.Add(new NavItemVm(cp.Route, cp.DisplayName, cp.NavOrder));
+
+        _navItems = items.OrderBy(i => i.NavOrder).ToList();
+    }
+
+    private async Task Logout()
+    {
+        await Auth.LogoutAsync();
+        Nav.NavigateTo("/login");
+    }
+
+    private record NavItemVm(string Href, string Label, int NavOrder);
+}

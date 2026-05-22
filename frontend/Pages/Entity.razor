@@ -1,0 +1,79 @@
+@page "/entity/{EntityType}"
+@page "/entity/{EntityType}/{Id}"
+@page "/entity/{EntityType}/new"
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Rendering
+@inject SchemaService Schema
+@inject CustomPageRegistry CustomPages
+@inject NavigationManager Nav
+
+<PageTitle>@GetTitle()</PageTitle>
+
+@if (_customEntry != null)
+{
+    <!-- Custom page replaces generic renderer for this route + tenant combo -->
+    <DynamicComponent Type="@_customEntry.ComponentType" />
+}
+else if (_schema == null)
+{
+    @if (_notFound)
+    {
+        <div class="entity-not-found">
+            <h2>Plugin not available</h2>
+            <p>The entity type <strong>@EntityType</strong> is not enabled for this tenant.</p>
+        </div>
+    }
+    else
+    {
+        <div class="entity-loading">Loading...</div>
+    }
+}
+else if (IsNew)
+{
+    <EntityFormPage Schema="@_schema" Id="null" />
+}
+else if (Id != null)
+{
+    <EntityDetailPage Schema="@_schema" Id="@Id" />
+}
+else
+{
+    <EntityListPage Schema="@_schema" />
+}
+
+@code {
+    [Parameter] public string EntityType { get; set; } = string.Empty;
+    [Parameter] public string? Id { get; set; }
+
+    private EntitySchema? _schema;
+    private ActiveCustomPageEntry? _customEntry;
+    private bool _notFound;
+
+    private bool IsNew => Nav.Uri.EndsWith("/new", StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _schema = null;
+        _customEntry = null;
+        _notFound = false;
+
+        // Check for custom page override first — takes priority over generic renderer.
+        var route = $"/entity/{EntityType}";
+        _customEntry = CustomPages.GetForRoute(route);
+        if (_customEntry != null) return;
+
+        // Fall back to generic schema-driven renderer.
+        var schema = await Schema.GetAsync(EntityType);
+        if (schema == null)
+            _notFound = true;
+        else
+            _schema = schema;
+    }
+
+    private string GetTitle()
+    {
+        if (_customEntry != null) return _customEntry.DisplayName;
+        return _schema?.DisplayNamePlural ?? EntityType;
+    }
+}

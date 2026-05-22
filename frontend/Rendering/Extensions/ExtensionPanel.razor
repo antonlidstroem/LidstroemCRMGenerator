@@ -1,0 +1,157 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+
+@* 
+  Renders plugin extension data attached to an entity detail.
+  Known extension keys get a custom component; unknown keys fall back
+  to a generic JSON tree so new plugins work without any frontend changes.
+*@
+
+<div class="extension-panel">
+    <div class="extension-header" @onclick="ToggleCollapsed">
+        <Icon Name="@GetIcon()" Size="16" />
+        <span class="extension-title">@GetTitle()</span>
+        <Icon Name="@(_collapsed ? "chevron-down" : "chevron-up")" Size="14" class="extension-chevron" />
+    </div>
+
+    @if (!_collapsed)
+    {
+        <div class="extension-body">
+            @RenderContent()
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Key { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public JsonElement Data { get; set; }
+
+    private bool _collapsed;
+
+    private void ToggleCollapsed() => _collapsed = !_collapsed;
+
+    private string GetTitle() => Key switch
+    {
+        "Donations"    => "Donations",
+        "FieldReports" => "Field Reports",
+        "Resources"    => "Attachments",
+        "ACL"          => "Sharing",
+        _              => Key
+    };
+
+    private string GetIcon() => Key switch
+    {
+        "Donations"    => "heart",
+        "FieldReports" => "file-text",
+        "Resources"    => "paperclip",
+        "ACL"          => "share-2",
+        _              => "layers"
+    };
+
+    private RenderFragment RenderContent() => Key switch
+    {
+        "Resources"    => RenderResourcesList(),
+        "Donations"    => RenderDonationsList(),
+        "FieldReports" => RenderFieldReportsList(),
+        _              => RenderGenericTree()
+    };
+
+    private RenderFragment RenderResourcesList() => __builder =>
+    {
+        if (Data.ValueKind != JsonValueKind.Array || Data.GetArrayLength() == 0)
+        {
+            __builder.AddMarkupContent(0, "<p class=\"ext-empty\">No attachments.</p>");
+            return;
+        }
+        __builder.OpenElement(0, "ul");
+        __builder.AddAttribute(1, "class", "ext-list");
+        int seq = 2;
+        foreach (var item in Data.EnumerateArray())
+        {
+            __builder.OpenElement(seq++, "li");
+            __builder.AddAttribute(seq++, "class", "ext-list-item");
+            var title = item.TryGetProperty("title", out var t) ? t.GetString() : "File";
+            var type  = item.TryGetProperty("type",  out var tp) ? tp.GetString() : "";
+            __builder.AddMarkupContent(seq++,
+                $"<span class=\"ext-resource-icon\">📎</span>" +
+                $"<span class=\"ext-resource-name\">{title}</span>" +
+                $"<span class=\"badge badge-neutral\">{type}</span>");
+            __builder.CloseElement();
+        }
+        __builder.CloseElement();
+    };
+
+    private RenderFragment RenderDonationsList() => __builder =>
+    {
+        if (Data.ValueKind != JsonValueKind.Array || Data.GetArrayLength() == 0)
+        {
+            __builder.AddMarkupContent(0, "<p class=\"ext-empty\">No donations.</p>");
+            return;
+        }
+        __builder.OpenElement(0, "ul");
+        __builder.AddAttribute(1, "class", "ext-list");
+        int seq = 2;
+        foreach (var item in Data.EnumerateArray())
+        {
+            var amount   = item.TryGetProperty("amount",   out var a) ? a.ToString() : "?";
+            var currency = item.TryGetProperty("currency", out var c) ? c.GetString() : "";
+            var date     = item.TryGetProperty("donationDate", out var d) ? d.GetString() : "";
+            __builder.OpenElement(seq++, "li");
+            __builder.AddAttribute(seq++, "class", "ext-list-item");
+            __builder.AddMarkupContent(seq++,
+                $"<span class=\"ext-donation-amount\">{amount} {currency}</span>" +
+                $"<span class=\"ext-donation-date\">{date}</span>");
+            __builder.CloseElement();
+        }
+        __builder.CloseElement();
+    };
+
+    private RenderFragment RenderFieldReportsList() => __builder =>
+    {
+        if (Data.ValueKind != JsonValueKind.Array || Data.GetArrayLength() == 0)
+        {
+            __builder.AddMarkupContent(0, "<p class=\"ext-empty\">No field reports.</p>");
+            return;
+        }
+        __builder.OpenElement(0, "ul");
+        __builder.AddAttribute(1, "class", "ext-list");
+        int seq = 2;
+        foreach (var item in Data.EnumerateArray())
+        {
+            var title = item.TryGetProperty("title", out var t) ? t.GetString() : "Report";
+            __builder.OpenElement(seq++, "li");
+            __builder.AddAttribute(seq++, "class", "ext-list-item ext-list-item--link");
+            __builder.AddMarkupContent(seq++,
+                $"<span class=\"ext-report-title\">{title}</span>");
+            __builder.CloseElement();
+        }
+        __builder.CloseElement();
+    };
+
+    // Generic fallback — renders any unknown extension as a readable key-value list
+    private RenderFragment RenderGenericTree() => __builder =>
+    {
+        __builder.OpenElement(0, "div");
+        __builder.AddAttribute(1, "class", "ext-generic");
+
+        if (Data.ValueKind == JsonValueKind.Array)
+        {
+            int seq = 2;
+            __builder.AddMarkupContent(seq++, $"<p class=\"ext-count\">{Data.GetArrayLength()} item(s)</p>");
+        }
+        else if (Data.ValueKind == JsonValueKind.Object)
+        {
+            int seq = 2;
+            foreach (var prop in Data.EnumerateObject())
+            {
+                __builder.AddMarkupContent(seq++,
+                    $"<div class=\"ext-kv\">" +
+                    $"<span class=\"ext-kv-key\">{prop.Name}</span>" +
+                    $"<span class=\"ext-kv-val\">{prop.Value}</span>" +
+                    $"</div>");
+            }
+        }
+
+        __builder.CloseElement();
+    };
+}

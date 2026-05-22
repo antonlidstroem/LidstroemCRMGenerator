@@ -1,0 +1,155 @@
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Layout
+@inject AuthService Auth
+@inject SchemaService Schema
+@inject PermissionService Permissions
+@inject SkinService Skin
+@inject AppState State
+@inject CustomPageRegistry CustomPages
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject IConfiguration Config
+
+@if (State.IsLoading)
+{
+    <div class="boot-screen">
+        <div class="boot-spinner"></div>
+    </div>
+}
+else
+{
+    <Router AppAssembly="@typeof(App).Assembly">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" DefaultLayout="@GetLayout()" />
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <PageTitle>Not found</PageTitle>
+            <LayoutView Layout="@GetLayout()">
+                <div class="not-found">
+                    <h1>404</h1>
+                    <p>This page does not exist.</p>
+                </div>
+            </LayoutView>
+        </NotFound>
+    </Router>
+}
+
+@code {
+    private string? _tenantSlug;
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.SetLoading(true);
+
+        _tenantSlug = await ResolveSlugAsync();
+        State.SetTenantSlug(_tenantSlug);
+
+        // Boot order matters:
+        // 1. Skin — applied before first render to prevent FOUC
+        // 2. Auth — restores JWT from storage
+        // 3. Permissions — only if authenticated
+        // 4. Custom pages — loaded for all visitors (routes affect layout)
+        await BootstrapSkinAsync(_tenantSlug);
+        await Auth.InitializeAsync();
+
+        if (Auth.IsAuthenticated)
+            await Permissions.LoadAsync();
+
+        await CustomPages.LoadAsync(/* injected ApiClient via DI */ GetApiClient(), _tenantSlug);
+
+        State.SetBootstrapped();
+    }
+
+    // ApiClient is not directly injectable here because App.razor bootstraps
+    // before the scoped DI scope is fully resolved in some edge cases.
+    // Resolve it from the service provider explicitly.
+    [Inject] private ApiClient ApiClient { get; set; } = null!;
+    private ApiClient GetApiClient() => ApiClient;
+
+    private async Task<string> ResolveSlugAsync()
+    {
+        try
+        {
+            var uri  = new Uri(Nav.Uri);
+            var host = uri.Host;
+
+            var slug = ExtractSubdomain(host);
+            if (!string.IsNullOrEmpty(slug)) return slug;
+
+            var byHostSlug = await TryResolveByHostAsync(host);
+            if (!string.IsNullOrEmpty(byHostSlug)) return byHostSlug;
+        }
+        catch { }
+
+        return Config["TenantSlug"] ?? Config["FallbackTenantSlug"] ?? "default";
+    }
+
+    private static string? ExtractSubdomain(string host)
+    {
+        var hostname = host.Split(':')[0];
+        var parts = hostname.Split('.');
+        if (parts.Length < 3) return null;
+        if (parts.All(p => int.TryParse(p, out _))) return null;
+        if (parts.Length == 3)
+        {
+            var candidate = parts[0].ToLowerInvariant();
+            var ignored = new HashSet<string> { "www", "app", "api", "mail", "smtp" };
+            if (ignored.Contains(candidate)) return null;
+            return candidate;
+        }
+        return null;
+    }
+
+    private async Task<string?> TryResolveByHostAsync(string host)
+    {
+        try
+        {
+            var apiBase = Config["ApiBaseUrl"] ?? Nav.BaseUri;
+            using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
+            var response = await http.GetAsync($"/pub/site/by-host/{Uri.EscapeDataString(host)}");
+            if (!response.IsSuccessStatusCode) return null;
+            var dto = await response.Content.ReadFromJsonAsync<SlugDto>();
+            return dto?.Slug;
+        }
+        catch { return null; }
+    }
+
+    private async Task BootstrapSkinAsync(string slug)
+    {
+        try
+        {
+            var apiBase = Config["ApiBaseUrl"] ?? Nav.BaseUri;
+            using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
+            var config = await http.GetFromJsonAsync<SiteConfig>($"/pub/site/{slug}");
+
+            if (config != null)
+            {
+                State.SetSiteConfig(config);
+                var prefersDark = config.DarkMode == "dark" ||
+                    (config.DarkMode == "system" &&
+                     await JS.InvokeAsync<bool>("matchMedia", "(prefers-color-scheme: dark)"));
+                await Skin.ApplyAsync(config, prefersDark);
+                await JS.InvokeVoidAsync("lidstroem.setSiteMetadata", config.SiteName, config.FaviconUrl);
+                return;
+            }
+        }
+        catch { }
+
+        await Skin.ApplyAsync(
+            new SiteConfig("Lidstroem", null, null, "Clarity", "Slate", null, "system"),
+            false);
+    }
+
+    private Type GetLayout() => Auth.IsAuthenticated
+        ? State.SiteConfig?.ThemeName switch
+        {
+            "Momentum" => typeof(MomentumLayout),
+            "Focus"    => typeof(FocusLayout),
+            _          => typeof(ClarityLayout)
+        }
+        : typeof(AuthLayout);
+
+    private record SlugDto(string Slug);
+}

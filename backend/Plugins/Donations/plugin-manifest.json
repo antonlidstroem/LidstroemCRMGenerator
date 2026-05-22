@@ -1,0 +1,40 @@
+{
+  "pluginKey": "Donations",
+  "displayName": "Donations",
+  "description": "Tracks donations. Donor must be an Actor. Target must be a Project or Activity.",
+  "version": "1.0.0",
+  "routePrefix": "donations",
+  "entities": [
+    {
+      "name": "Donation",
+      "hasGdprHandler": true,
+      "hasLinkResolver": false,
+      "hasExtensionProvider": ["Actor", "Project", "Activity"],
+      "polymorphicRelations": [
+        { "field": "DonorId+DonorType",   "allowedTypes": ["Actor"] },
+        { "field": "TargetId+TargetType", "allowedTypes": ["Project", "Activity"] }
+      ],
+      "fields": [
+        { "name": "Amount",       "type": "Decimal",  "required": true  },
+        { "name": "Currency",     "type": "Text",     "required": true, "maxLength": 3 },
+        { "name": "DonationDate", "type": "DateTime", "required": false },
+        { "name": "DonorId",      "type": "FK",       "required": false, "relatedTo": "Actor" },
+        { "name": "DonorType",    "type": "Text",     "required": false, "allowedValues": ["Actor"] },
+        { "name": "TargetId",     "type": "FK",       "required": false },
+        { "name": "TargetType",   "type": "Text",     "required": false, "allowedValues": ["Project","Activity"] }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "Donations.View",   "category": "Donations" },
+    { "name": "Donations.Create", "category": "Donations" },
+    { "name": "Donations.Edit",   "category": "Donations" },
+    { "name": "Donations.Delete", "category": "Donations" }
+  ],
+  "listensToEvents": [],
+  "publishesEvents": [],
+  "navGroup": "Finance",
+  "navOrder": 50,
+  "dependsOn": [],
+  "optionallyExtends": ["Actor", "Project", "Activity"]
+}

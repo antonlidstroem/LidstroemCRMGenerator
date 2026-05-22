@@ -1,0 +1,23 @@
+{
+  "pluginKey": "Communication",
+  "displayName": "Communication",
+  "description": "Sends email and in-app notifications. Reacts to ActorCreatedEvent and ActorForgottenEvent.",
+  "version": "1.0.0",
+  "routePrefix": "notifications",
+  "entities": [
+    { "name": "Notification",         "hasGdprHandler": true,  "hasLinkResolver": false },
+    { "name": "NotificationTemplate", "hasGdprHandler": false, "hasLinkResolver": false },
+    { "name": "EmailLog",             "hasGdprHandler": false, "hasLinkResolver": false }
+  ],
+  "permissions": [
+    { "name": "Communication.ViewInbox",       "category": "Communication" },
+    { "name": "Communication.ManageTemplates", "category": "Communication" },
+    { "name": "Communication.ViewEmailLog",    "category": "Communication" }
+  ],
+  "listensToEvents": ["ActorCreatedEvent", "ActorForgottenEvent"],
+  "publishesEvents": [],
+  "navGroup": null,
+  "navOrder": 700,
+  "dependsOn": [],
+  "optionallyExtends": []
+}

@@ -1,0 +1,99 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+
+@* Renders a read-only value for a table cell or detail view field *@
+
+@switch (Field.Type)
+{
+    case FieldType.Boolean:
+        <span class="badge @(BoolVal ? "badge-success" : "badge-neutral")">
+            @(BoolVal ? "Yes" : "No")
+        </span>
+        break;
+
+    case FieldType.Date:
+    case FieldType.DateTime:
+        @if (DateVal.HasValue)
+        {
+            <time datetime="@DateVal.Value.ToString("O")" class="cell-date">
+                @(Field.Type == FieldType.Date
+                    ? DateVal.Value.ToString("dd MMM yyyy")
+                    : DateVal.Value.ToString("dd MMM yyyy HH:mm"))
+            </time>
+        }
+        break;
+
+    case FieldType.Decimal:
+    case FieldType.Number:
+        <span class="cell-number">@StringVal</span>
+        break;
+
+    case FieldType.Enum:
+        var label = Field.EnumOptions?.FirstOrDefault(o => o.Value == StringVal)?.DisplayName ?? StringVal;
+        <span class="badge badge-neutral">@label</span>
+        break;
+
+    case FieldType.RichText:
+        <span class="cell-richtext-preview">
+            @(StringVal.Length > 120 ? StringVal[..120] + "…" : StringVal)
+        </span>
+        break;
+
+    case FieldType.File:
+        @if (!string.IsNullOrEmpty(StringVal))
+        {
+            <span class="cell-file">
+                <Icon Name="paperclip" Size="12" />
+                @StringVal
+            </span>
+        }
+        break;
+
+    default:
+        <span class="cell-text" title="@StringVal">
+            @(StringVal.Length > 80 ? StringVal[..80] + "…" : StringVal)
+        </span>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public FieldDefinition Field { get; set; } = null!;
+    [Parameter, EditorRequired] public JsonElement Row { get; set; }
+
+    private string StringVal
+    {
+        get
+        {
+            if (TryGetProp(out var el))
+                return el.ValueKind == JsonValueKind.String ? el.GetString() ?? "" : el.ToString();
+            return string.Empty;
+        }
+    }
+
+    private bool BoolVal
+    {
+        get
+        {
+            if (TryGetProp(out var el))
+                return el.ValueKind == JsonValueKind.True;
+            return false;
+        }
+    }
+
+    private DateTime? DateVal
+    {
+        get
+        {
+            if (TryGetProp(out var el) && el.ValueKind == JsonValueKind.String)
+                return DateTime.TryParse(el.GetString(), out var d) ? d : null;
+            return null;
+        }
+    }
+
+    private bool TryGetProp(out JsonElement el)
+    {
+        // Try camelCase first, then PascalCase
+        var camel = char.ToLower(Field.FieldName[0]) + Field.FieldName[1..];
+        return Row.TryGetProperty(camel, out el) || Row.TryGetProperty(Field.FieldName, out el);
+    }
+}

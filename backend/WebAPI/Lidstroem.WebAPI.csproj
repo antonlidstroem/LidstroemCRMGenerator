@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>$(NoWarn);NU1901</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MediatR" Version="12.4.1" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Scalar.AspNetCore" Version="2.3.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\Lidstroem.Core.csproj" />
+    <ProjectReference Include="..\Infrastructure\Lidstroem.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shared\Lidstroem.Shared.csproj" />
+    <!-- Plugins — add or remove freely; the system adapts at runtime -->
+    <ProjectReference Include="..\Plugins\ACL\Lidstroem.Plugins.ACL.csproj" />
+    <ProjectReference Include="..\Plugins\CMS\Lidstroem.Plugins.CMS.csproj" />
+    <ProjectReference Include="..\Plugins\Communication\Lidstroem.Plugins.Communication.csproj" />
+    <ProjectReference Include="..\Plugins\Donations\Lidstroem.Plugins.Donations.csproj" />
+    <ProjectReference Include="..\Plugins\FieldReports\Lidstroem.Plugins.FieldReports.csproj" />
+    <ProjectReference Include="..\Plugins\GDPR\Lidstroem.Plugins.GDPR.csproj" />
+    <ProjectReference Include="..\Plugins\Invitations\Lidstroem.Plugins.Invitations.csproj" />
+    <ProjectReference Include="..\Plugins\Resources\Lidstroem.Plugins.Resources.csproj" />
+    <ProjectReference Include="..\Plugins\Schema\Lidstroem.Plugins.Schema.csproj" />
+    <ProjectReference Include="..\Plugins\SuperAdmin\Lidstroem.Plugins.SuperAdmin.csproj" />
+    <ProjectReference Include="..\Plugins\WorkManagement.Activities\Lidstroem.Plugins.WorkManagement.Activities.csproj" />
+    <ProjectReference Include="..\Plugins\WorkManagement.Projects\Lidstroem.Plugins.WorkManagement.Projects.csproj" />
+	  <ProjectReference Include="..\Plugins\Reports\Lidstroem.Plugins.Reports.csproj" />
+  </ItemGroup>
+</Project>

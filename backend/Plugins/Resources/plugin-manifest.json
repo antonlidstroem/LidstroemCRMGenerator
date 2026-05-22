@@ -1,0 +1,26 @@
+{
+  "pluginKey": "Resources",
+  "displayName": "Resources",
+  "description": "File and link attachments. Can be attached to any entity via polymorphic TargetId+TargetType.",
+  "version": "1.0.0",
+  "routePrefix": "resources",
+  "entities": [
+    {
+      "name": "Resource",
+      "hasGdprHandler": true,
+      "hasLinkResolver": false,
+      "hasExtensionProvider": [],
+      "polymorphicRelations": [
+        { "field": "TargetId+TargetType", "allowedTypes": ["any"] }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "Resources.View",   "category": "Resources" },
+    { "name": "Resources.Upload", "category": "Resources" },
+    { "name": "Resources.Delete", "category": "Resources" }
+  ],
+  "navGroup": null,
+  "navOrder": 500,
+  "note": "Register GenericResourceExtensionProvider(entityType) manually for each entity you want to extend."
+}

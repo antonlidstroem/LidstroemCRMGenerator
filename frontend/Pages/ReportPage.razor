@@ -1,0 +1,301 @@
+@page "/reports/{Key}"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ReportService Reports
+@inject AuthService Auth
+@inject NavigationManager Nav
+
+<PageTitle>@(_meta?.DisplayName ?? "Report")</PageTitle>
+
+@if (_loading)
+{
+    <div class="loading-indicator">Loading…</div>
+    return;
+}
+
+@if (_meta == null)
+{
+    <div class="empty-state">Report not found.</div>
+    return;
+}
+
+<div class="page-header">
+    <h1 class="page-title">@_meta.DisplayName</h1>
+    @if (!string.IsNullOrEmpty(_meta.Description))
+    {
+        <p class="page-description">@_meta.Description</p>
+    }
+</div>
+
+@* ── Parameter form ──────────────────────────────────────────────────────── *@
+@if (_meta.Parameters.Count > 0)
+{
+    <div class="report-filters">
+        @foreach (var param in _meta.Parameters)
+        {
+            <div class="form-field form-field--inline">
+                <label class="field-label">
+                    @param.DisplayName
+                    @if (param.IsRequired) { <span class="required">*</span> }
+                </label>
+
+                @if (param.Type == "Enum" && param.EnumOptions.Count > 0)
+                {
+                    <select class="field-input" @bind="_params[param.Key]">
+                        @if (!param.IsRequired)
+                        {
+                            <option value="">All</option>
+                        }
+                        @foreach (var opt in param.EnumOptions)
+                        {
+                            <option value="@opt">@opt</option>
+                        }
+                    </select>
+                }
+                else if (param.Type == "Date")
+                {
+                    <input class="field-input" type="date"
+                           value="@GetParam(param.Key)"
+                           @onchange="e => SetParam(param.Key, e.Value?.ToString())" />
+                }
+                else if (param.Type == "Number")
+                {
+                    <input class="field-input" type="number"
+                           value="@GetParam(param.Key)"
+                           @onchange="e => SetParam(param.Key, e.Value?.ToString())"
+                           placeholder="@param.Placeholder" />
+                }
+                else if (param.Type == "Boolean")
+                {
+                    <input type="checkbox"
+                           class="field-checkbox"
+                           checked="@(GetParam(param.Key) == "true")"
+                           @onchange="e => SetParam(param.Key, e.Value is true ? TrueStr : FalseStr)" />
+                }
+                else
+                {
+                    <input class="field-input" type="text"
+                           value="@GetParam(param.Key)"
+                           @onchange="e => SetParam(param.Key, e.Value?.ToString())"
+                           placeholder="@param.Placeholder" />
+                }
+            </div>
+        }
+
+        <div class="report-filter-actions">
+            <button class="btn btn-primary" @onclick="RunAsync" disabled="@_running">
+                @(_running ? "Running…" : "Run report")
+            </button>
+        </div>
+    </div>
+}
+
+@* ── Error ───────────────────────────────────────────────────────────────── *@
+@if (_error != null)
+{
+    <div class="form-error">@_error</div>
+}
+
+@* ── Results ─────────────────────────────────────────────────────────────── *@
+@if (_result != null)
+{
+    <div class="report-result">
+
+        <div class="report-result-header">
+            <span class="report-row-count">@_result.TotalRows rows</span>
+            <a class="btn btn-ghost btn-sm"
+               href="@Reports.GetCsvDownloadUrl(Key, _params)"
+               download>
+                ↓ Export CSV
+            </a>
+        </div>
+
+        @* Chart *@
+        @if (_result.ChartHint != null)
+        {
+            <ReportChart Result="@_result" Hint="@_result.ChartHint" />
+        }
+
+        @* Table *@
+        <div class="entity-table-wrap">
+            <table class="entity-table">
+                <thead>
+                    <tr>
+                        @foreach (var col in _result.Columns)
+                        {
+                            <th class="@(col.IsSortable ? "sortable" : "")"
+                                @onclick="() => ToggleSort(col.Key)">
+                                @col.DisplayName
+                                @if (_sortKey == col.Key)
+                                {
+                                    <span>@(_sortAsc ? "↑" : "↓")</span>
+                                }
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in SortedRows())
+                    {
+                        <tr>
+                            @foreach (var col in _result.Columns)
+                            {
+                                <td class="@GetCellClass(col.Type)">
+                                    @FormatCell(row, col)
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+                @if (_result.Summary != null)
+                {
+                    <tfoot>
+                        <tr class="report-summary-row">
+                            @foreach (var col in _result.Columns)
+                            {
+                                <td class="@GetCellClass(col.Type)">
+                                    @FormatSummaryCell(_result.Summary, col)
+                                </td>
+                            }
+                        </tr>
+                    </tfoot>
+                }
+            </table>
+        </div>
+    </div>
+}
+else if (!_running && _hasRun)
+{
+    <div class="empty-state">No data found for these parameters.</div>
+}
+else if (_meta.Parameters.Count == 0 && !_hasRun)
+{
+    // No parameters — run immediately on load
+}
+
+@code {
+    private const string TrueStr = "true";
+    private const string FalseStr = "false";
+    [Parameter] public string Key { get; set; } = string.Empty;
+
+    private ReportMetadataVm? _meta;
+    private ReportResultVm? _result;
+    private Dictionary<string, string?> _params = new();
+    private bool _loading = true;
+    private bool _running;
+    private bool _hasRun;
+    private string? _error;
+    private string? _sortKey;
+    private bool _sortAsc = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _result = null;
+        _hasRun = false;
+        _error = null;
+        _meta = await Reports.GetAsync(Key);
+        _loading = false;
+
+        // Auto-run if no parameters
+        if (_meta != null && _meta.Parameters.Count == 0)
+            await RunAsync();
+    }
+
+    private async Task RunAsync()
+    {
+        if (_meta == null) return;
+
+        // Validate required
+        foreach (var p in _meta.Parameters.Where(p => p.IsRequired))
+        {
+            if (!_params.TryGetValue(p.Key, out var v) || string.IsNullOrWhiteSpace(v))
+            {
+                _error = $"'{p.DisplayName}' is required.";
+                return;
+            }
+        }
+
+        _running = true;
+        _error = null;
+        _result = null;
+        StateHasChanged();
+
+        _result = await Reports.RunAsync(Key, _params);
+        _hasRun = true;
+        _running = false;
+
+        if (_result == null)
+            _error = "Report failed. Check that all parameters are valid.";
+    }
+
+    private void ToggleSort(string colKey)
+    {
+        if (_sortKey == colKey) _sortAsc = !_sortAsc;
+        else { _sortKey = colKey; _sortAsc = true; }
+    }
+
+    private IEnumerable<Dictionary<string, JsonElement>> SortedRows()
+    {
+        if (_result == null) yield break;
+        var rows = _result.Rows.AsEnumerable();
+
+        if (_sortKey != null)
+        {
+            rows = _sortAsc
+                ? rows.OrderBy(r => GetSortKey(r, _sortKey))
+                : rows.OrderByDescending(r => GetSortKey(r, _sortKey));
+        }
+
+        foreach (var r in rows) yield return r;
+    }
+
+    private static string GetSortKey(Dictionary<string, JsonElement> row, string key)
+    {
+        if (!row.TryGetValue(key, out var el)) return string.Empty;
+        return el.ValueKind == JsonValueKind.Number
+            ? el.GetDecimal().ToString("000000000000.000")
+            : el.GetString() ?? string.Empty;
+    }
+
+    private static string FormatCell(Dictionary<string, JsonElement> row, ReportColumnVm col)
+    {
+        if (!row.TryGetValue(col.Key, out var el)) return "—";
+        return FormatElement(el, col.Type, col.Format);
+    }
+
+    private static string FormatSummaryCell(Dictionary<string, JsonElement> summary, ReportColumnVm col)
+    {
+        if (!summary.TryGetValue(col.Key, out var el)) return string.Empty;
+        return FormatElement(el, col.Type, col.Format);
+    }
+
+    private static string FormatElement(JsonElement el, string type, string? format)
+    {
+        if (el.ValueKind == JsonValueKind.Null || el.ValueKind == JsonValueKind.Undefined)
+            return "—";
+
+        return type switch
+        {
+            "Number"   => el.TryGetInt32(out var i) ? i.ToString("N0") : el.GetRawText(),
+            "Decimal"  => el.TryGetDecimal(out var d) ? d.ToString(format ?? "N2") : el.GetRawText(),
+            "Currency" => el.TryGetDecimal(out var c) ? c.ToString("N2") : el.GetRawText(),
+            "Percent"  => el.TryGetDecimal(out var p) ? (p * 100).ToString("N1") + "%" : el.GetRawText(),
+            "Date"     => DateTime.TryParse(el.GetString(), out var dt) ? dt.ToString("yyyy-MM-dd") : el.GetString() ?? "—",
+            "DateTime" => DateTime.TryParse(el.GetString(), out var dtt) ? dtt.ToString("yyyy-MM-dd HH:mm") : el.GetString() ?? "—",
+            _          => el.GetString() ?? el.GetRawText()
+        };
+    }
+
+    private static string GetCellClass(string type) => type switch
+    {
+        "Number" or "Decimal" or "Currency" or "Percent" => "cell-numeric",
+        _ => string.Empty
+    };
+
+    private string? GetParam(string key) =>
+        _params.TryGetValue(key, out var v) ? v : null;
+
+    private void SetParam(string key, string? value) =>
+        _params[key] = value;
+}

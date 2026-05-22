@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="MediatR" Version="12.4.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0" />
+    <!-- BUG FIX #19: Added MailKit to replace the obsolete System.Net.Mail.SmtpClient -->
+    <PackageReference Include="MailKit" Version="4.7.1.1" />
+    <PackageReference Include="Scriban" Version="5.12.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\Lidstroem.Core.csproj" />
+    <ProjectReference Include="..\..\Shared\Lidstroem.Shared.csproj" />
+  </ItemGroup>
+</Project>

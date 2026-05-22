@@ -1,0 +1,34 @@
+{
+  "pluginKey": "ACL",
+  "displayName": "Access Control",
+  "description": "Grants and revokes fine-grained resource access between actors.",
+  "version": "1.0.0",
+  "routePrefix": "acl",
+  "entities": [
+    {
+      "name": "AclGrant",
+      "hasGdprHandler": true,
+      "hasLinkResolver": false,
+      "hasExtensionProvider": [],
+      "fields": [
+        { "name": "ResourceId",       "type": "Number", "required": true },
+        { "name": "ResourceType",     "type": "Text",   "required": true },
+        { "name": "GrantedByActorId", "type": "FK",     "required": true, "relatedTo": "Actor" },
+        { "name": "GrantedToActorId", "type": "FK",     "required": true, "relatedTo": "Actor" },
+        { "name": "Action",           "type": "Enum",   "required": true, "allowedValues": ["Read","Write","Delete","Share"] },
+        { "name": "ExpiresAt",        "type": "DateTime","required": false }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "ACL.Grant",      "category": "Sharing" },
+    { "name": "ACL.Revoke",     "category": "Sharing" },
+    { "name": "ACL.ViewGrants", "category": "Sharing" }
+  ],
+  "listensToEvents": [],
+  "publishesEvents": [],
+  "navGroup": null,
+  "navOrder": 900,
+  "dependsOn": [],
+  "optionallyExtends": []
+}

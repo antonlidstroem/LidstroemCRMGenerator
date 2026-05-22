@@ -1,0 +1,59 @@
+@* Renders a labelled color picker that writes into the shared overrides dictionary *@
+
+<div class="token-row">
+    <label class="token-label">@Label</label>
+    <div class="token-input-group">
+        <input type="color"
+               class="token-color-swatch"
+               value="@CurrentValue"
+               @oninput="OnColorInput" />
+        <input type="text"
+               class="field-input token-text-input"
+               value="@CurrentValue"
+               @oninput="OnTextInput"
+               placeholder="@Placeholder"
+               maxlength="25" />
+        @if (!string.IsNullOrEmpty(CurrentValue))
+        {
+            <button type="button" class="token-clear-btn" @onclick="Clear" title="Reset to preset">
+                ×
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public string Token { get; set; } = string.Empty;
+    [Parameter] public Dictionary<string, string> Value { get; set; } = new();
+    [Parameter] public EventCallback<Dictionary<string, string>> ValueChanged { get; set; }
+
+    private string CurrentValue =>
+        Value.TryGetValue(Token, out var v) ? v : string.Empty;
+
+    private string Placeholder => Token.Replace("--color-", "#");
+
+    private async Task OnColorInput(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString() ?? string.Empty;
+        await SetValue(val);
+    }
+
+    private async Task OnTextInput(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString() ?? string.Empty;
+        await SetValue(val);
+    }
+
+    private async Task Clear() => await SetValue(string.Empty);
+
+    private async Task SetValue(string val)
+    {
+        if (string.IsNullOrEmpty(val))
+            Value.Remove(Token);
+        else
+            Value[Token] = val;
+
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

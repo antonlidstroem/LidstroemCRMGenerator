@@ -1,0 +1,130 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject SchemaService Schema
+
+<div class="multi-relation-picker">
+    <!-- Selected tags -->
+    <div class="selected-tags">
+        @foreach (var tag in _selectedTags)
+        {
+            <span class="tag">
+                @tag.Label
+                @if (!Disabled)
+                {
+                    <button type="button" class="tag-remove" @onclick="() => Remove(tag)">×</button>
+                }
+            </span>
+        }
+        @if (!Disabled)
+        {
+            <input type="text"
+                   class="tag-input"
+                   @oninput="SearchAsync"
+                   @onfocus="OpenAsync"
+                   placeholder="@((_selectedTags.Count == 0) ? $"Add {Field.RelatedEntityType}…" : "+")"
+                   value="@_query" />
+        }
+    </div>
+
+    <!-- Dropdown -->
+    @if (_open && _options.Count > 0)
+    {
+        <ul class="relation-dropdown">
+            @foreach (var opt in _options.Where(o => !_selectedTags.Any(t => t.Id == o.Id)))
+            {
+                <li class="relation-option" @onclick="() => Add(opt)">@opt.Label</li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public FieldDefinition Field { get; set; } = null!;
+    [Parameter] public string? Value { get; set; }  // comma-separated IDs
+    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private List<RelationOption> _selectedTags = new();
+    private List<RelationOption> _options = new();
+    private string _query = string.Empty;
+    private bool _open;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (string.IsNullOrEmpty(Value)) return;
+
+        var schema = Field.RelatedEntityType != null
+            ? await Schema.GetAsync(Field.RelatedEntityType) : null;
+        if (schema == null) return;
+
+        _selectedTags.Clear();
+        foreach (var id in Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var item = await Api.GetOneAsync($"{schema.ApiBasePath}/{id.Trim()}");
+            if (item.HasValue)
+                _selectedTags.Add(new RelationOption(id.Trim(), ExtractLabel(item.Value)));
+        }
+    }
+
+    private async Task OpenAsync()
+    {
+        _open = true;
+        await LoadOptionsAsync(string.Empty);
+    }
+
+    private async Task SearchAsync(ChangeEventArgs e)
+    {
+        _query = e.Value?.ToString() ?? string.Empty;
+        await LoadOptionsAsync(_query);
+    }
+
+    private async Task LoadOptionsAsync(string query)
+    {
+        if (Field.RelatedEntityType == null) return;
+        var schema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (schema == null) return;
+        // Fix 1: Same as RelationPicker — limit to 200 for dropdown population.
+        var items = await Api.GetListAsync($"{schema.ApiBasePath}?pageSize=200");
+        if (items == null) return;
+        _options = items
+            .Select(i => new RelationOption(GetId(i) ?? "", ExtractLabel(i)))
+            .Where(o => string.IsNullOrEmpty(query) || o.Label.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Take(10)
+            .ToList();
+    }
+
+    private async Task Add(RelationOption option)
+    {
+        if (!_selectedTags.Any(t => t.Id == option.Id))
+        {
+            _selectedTags.Add(option);
+            await EmitValue();
+        }
+        _query = string.Empty;
+        _open = false;
+    }
+
+    private async Task Remove(RelationOption option)
+    {
+        _selectedTags.Remove(option);
+        await EmitValue();
+    }
+
+    private async Task EmitValue() =>
+        await ValueChanged.InvokeAsync(string.Join(",", _selectedTags.Select(t => t.Id)));
+
+    private static string? GetId(JsonElement el) =>
+        el.TryGetProperty("id", out var p) ? p.ToString() : null;
+
+    private static string ExtractLabel(JsonElement el)
+    {
+        foreach (var c in new[] { "displayName", "title", "name", "email" })
+            if (el.TryGetProperty(c, out var p) && p.ValueKind == JsonValueKind.String)
+                return p.GetString() ?? string.Empty;
+        return "Unknown";
+    }
+
+    private record RelationOption(string Id, string Label);
+}

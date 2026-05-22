@@ -1,0 +1,9 @@
+@* Icon - renders a Lucide icon via CSS class (loaded in index.html) *@
+<span class="icon icon-@Name @(Class ?? "")" style="@(Size > 0 ? $"font-size:{Size}px;width:{Size}px;height:{Size}px" : "")">
+</span>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = string.Empty;
+    [Parameter] public int Size { get; set; }
+    [Parameter] public string? Class { get; set; }
+}

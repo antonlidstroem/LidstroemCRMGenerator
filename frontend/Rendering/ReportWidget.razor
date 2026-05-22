@@ -1,0 +1,135 @@
+@*
+  ReportWidget — embeds a named report or ad-hoc query result as a chart
+  or table inside any custom page, dashboard or layout.
+
+  Named report usage:
+    <ReportWidget ReportKey="DonationsByProject"
+                  ChartType="bar"
+                  Title="Donations per project" />
+
+  Ad-hoc query usage:
+    <ReportWidget Query="@_myQuery"
+                  ChartType="bar"
+                  Title="Open activities by owner" />
+
+  The widget handles loading, empty state and error display internally.
+*@
+
+@using Lidstroem.Frontend.Core.Services
+@inject ReportService Reports
+
+<div class="report-widget">
+    @if (!string.IsNullOrEmpty(Title))
+    {
+        <div class="report-widget-header">
+            <h3 class="report-widget-title">@Title</h3>
+        </div>
+    }
+
+    @if (_loading)
+    {
+        <div class="report-widget-loading">Loading…</div>
+    }
+    else if (_error != null)
+    {
+        <div class="report-widget-error">@_error</div>
+    }
+    else if (_result == null || _result.Rows.Count == 0)
+    {
+        <div class="report-widget-empty">No data</div>
+    }
+    else
+    {
+        @if (ShowChart && _result.ChartHint != null)
+        {
+            <ReportChart Result="@_result" Hint="@_result.ChartHint" />
+        }
+        else if (ShowChart && !string.IsNullOrEmpty(LabelColumn) && !string.IsNullOrEmpty(ValueColumn))
+        {
+            var hint = new ReportChartHintVm(LabelColumn, ValueColumn, ChartType ?? "bar");
+            <ReportChart Result="@_result" Hint="@hint" />
+        }
+
+        @if (ShowTable)
+        {
+            <div class="entity-table-wrap">
+                <table class="entity-table entity-table--compact">
+                    <thead>
+                        <tr>
+                            @foreach (var col in _result.Columns)
+                            {
+                                <th>@col.DisplayName</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _result.Rows.Take(MaxRows ?? 10))
+                        {
+                            <tr>
+                                @foreach (var col in _result.Columns)
+                                {
+                                    <td>@GetValue(row, col.Key)</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    /// <summary>Run a named report by key. Mutually exclusive with Query.</summary>
+    [Parameter] public string? ReportKey { get; set; }
+
+    /// <summary>Parameters passed to the named report.</summary>
+    [Parameter] public Dictionary<string, string?>? ReportParameters { get; set; }
+
+    /// <summary>Run an ad-hoc query. Mutually exclusive with ReportKey.</summary>
+    [Parameter] public QueryRequestVm? Query { get; set; }
+
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public bool ShowChart { get; set; } = true;
+    [Parameter] public bool ShowTable { get; set; } = false;
+    [Parameter] public string? ChartType { get; set; } // "bar" | "line" | "pie"
+    [Parameter] public string? LabelColumn { get; set; }
+    [Parameter] public string? ValueColumn { get; set; }
+    [Parameter] public int? MaxRows { get; set; }
+
+    private ReportResultVm? _result;
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        _result = null;
+
+        try
+        {
+            if (!string.IsNullOrEmpty(ReportKey))
+                _result = await Reports.RunAsync(ReportKey, ReportParameters ?? new());
+            else if (Query != null)
+                _result = await Reports.QueryAsync(Query);
+        }
+        catch
+        {
+            _error = "Failed to load data.";
+        }
+
+        _loading = false;
+    }
+
+    private static string GetValue(
+        System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement> row,
+        string key)
+    {
+        if (!row.TryGetValue(key, out var el)) return "—";
+        return el.ValueKind == System.Text.Json.JsonValueKind.Null ? "—"
+            : el.GetString() ?? el.GetRawText();
+    }
+}

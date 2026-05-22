@@ -1,0 +1,365 @@
+@page "/admin/site/skin"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@using Lidstroem.Frontend.Skins
+@inject ApiClient Api
+@inject SkinService Skin
+@inject AppState State
+
+<PageTitle>Site & Branding</PageTitle>
+
+<div class="skin-editor-page">
+    <div class="page-header">
+        <h1 class="page-title">Site &amp; Branding</h1>
+        <div class="page-header-actions">
+            @if (_saveError != null)
+            {
+                <span class="save-error">@_saveError</span>
+            }
+            @if (_saveSuccess)
+            {
+                <span class="save-success">✓ Saved</span>
+            }
+            <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                @if (_saving) { <span class="btn-spinner"></span> }
+                Save changes
+            </button>
+        </div>
+    </div>
+
+    <div class="skin-editor-layout">
+
+        <!-- Left: controls -->
+        <div class="skin-editor-controls">
+
+            <!-- Theme picker -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Layout theme</h2>
+                <p class="editor-section-desc">Controls how navigation and page structure is arranged.</p>
+                <div class="theme-cards">
+                    @foreach (var theme in _themes)
+                    {
+                        <button class="theme-card @(_form.ThemeName == theme.Name ? "theme-card--active" : "")"
+                                @onclick="() => _form.ThemeName = theme.Name">
+                            <div class="theme-card-preview">
+                                @((MarkupString)theme.PreviewSvg)
+                            </div>
+                            <span class="theme-card-name">@theme.Name</span>
+                            <span class="theme-card-desc">@theme.Description</span>
+                        </button>
+                    }
+                </div>
+            </section>
+
+            <!-- Skin package picker -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Color &amp; style preset</h2>
+                <p class="editor-section-desc">Choose a starting point. You can customise individual tokens below.</p>
+                <div class="skin-swatches">
+                    @foreach (var (name, tokens) in SkinPackages.All)
+                    {
+                        <button class="skin-swatch @(_form.SkinPackage == name ? "skin-swatch--active" : "")"
+                                @onclick="() => SelectPackage(name)"
+                                title="@name">
+                            <span class="swatch-primary" style="background:@tokens.ColorPrimary"></span>
+                            <span class="swatch-surface" style="background:@tokens.ColorSurface"></span>
+                            <span class="swatch-name">@name</span>
+                        </button>
+                    }
+                </div>
+            </section>
+
+            <!-- Custom token overrides -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Custom colours</h2>
+                <p class="editor-section-desc">Override individual tokens. Leave blank to use the preset value.</p>
+
+                <div class="token-grid">
+                    <TokenInput Label="Primary colour"    Token="--color-primary"     @bind-Value="_overrides" />
+                    <TokenInput Label="Secondary colour"  Token="--color-secondary"   @bind-Value="_overrides" />
+                    <TokenInput Label="Surface colour"    Token="--color-surface"     @bind-Value="_overrides" />
+                    <TokenInput Label="Background colour" Token="--color-background"  @bind-Value="_overrides" />
+                    <TokenInput Label="Text colour"       Token="--color-text"        @bind-Value="_overrides" />
+                    <TokenInput Label="Border colour"     Token="--color-border"      @bind-Value="_overrides" />
+                </div>
+            </section>
+
+            <!-- Typography -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Typography</h2>
+                <div class="token-grid">
+                    <div class="token-row">
+                        <label class="token-label">Heading font</label>
+                        <select class="field-input" @bind="_headingFont">
+                            @foreach (var pair in _fontPairs)
+                            {
+                                <option value="@pair.Heading">@pair.Heading</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="token-row">
+                        <label class="token-label">Body font</label>
+                        <select class="field-input" @bind="_bodyFont">
+                            @foreach (var pair in _fontPairs)
+                            {
+                                <option value="@pair.Body">@pair.Body</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Dark mode -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Dark mode</h2>
+                <div class="dark-mode-options">
+                    @foreach (var opt in _darkModeOptions)
+                    {
+                        <label class="radio-option @(_form.DarkMode == opt.Value ? "radio-option--active" : "")">
+                            <input type="radio" name="darkMode" value="@opt.Value"
+                                   checked="@(_form.DarkMode == opt.Value)"
+                                   @onchange="() => _form.DarkMode = opt.Value" />
+                            <span class="radio-label">@opt.Label</span>
+                            <span class="radio-desc">@opt.Description</span>
+                        </label>
+                    }
+                </div>
+            </section>
+
+            <!-- Branding -->
+            <section class="editor-section">
+                <h2 class="editor-section-title">Branding</h2>
+                <div class="form-field">
+                    <label class="field-label">Site name</label>
+                    <input type="text" class="field-input" @bind="_form.SiteName" />
+                </div>
+                <div class="form-field" style="margin-top:1rem">
+                    <label class="field-label">Logo URL <span class="field-desc">(SVG or PNG, displayed in nav)</span></label>
+                    <input type="url" class="field-input" @bind="_form.LogoUrl" placeholder="https://..." />
+                </div>
+                <div class="form-field" style="margin-top:1rem">
+                    <label class="field-label">Favicon URL</label>
+                    <input type="url" class="field-input" @bind="_form.FaviconUrl" placeholder="https://..." />
+                </div>
+            </section>
+        </div>
+
+        <!-- Right: live preview -->
+        <div class="skin-editor-preview">
+            <div class="preview-label">Live preview</div>
+            <div class="preview-frame" style="@PreviewStyles">
+                <div class="preview-sidebar">
+                    <div class="preview-logo">@_form.SiteName</div>
+                    <div class="preview-nav">
+                        <div class="preview-nav-item preview-nav-item--active">Dashboard</div>
+                        <div class="preview-nav-group">Work Management</div>
+                        <div class="preview-nav-item">Projects</div>
+                        <div class="preview-nav-item">Activities</div>
+                    </div>
+                </div>
+                <div class="preview-main">
+                    <div class="preview-topbar">
+                        <span class="preview-breadcrumb">Dashboard</span>
+                    </div>
+                    <div class="preview-content">
+                        <div class="preview-card">
+                            <div class="preview-card-row preview-card-header-row"></div>
+                            <div class="preview-card-row"></div>
+                            <div class="preview-card-row preview-card-row--short"></div>
+                            <div class="preview-card-row"></div>
+                        </div>
+                        <div class="preview-btn"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private SkinEditorForm _form = new();
+    private Dictionary<string, string> _overrides = new();
+    private string _headingFont = "DM Sans";
+    private string _bodyFont = "DM Sans";
+    private bool _saving;
+    private string? _saveError;
+    private bool _saveSuccess;
+
+    private readonly List<ThemeOption> _themes = new()
+    {
+        new("Clarity",  "Sidebar navigation",      ClaritySvg),
+        new("Momentum", "Top-bar navigation",       MomentumSvg),
+        new("Focus",    "Minimal, command-palette", FocusSvg),
+    };
+
+    private readonly List<FontPair> _fontPairs = new()
+    {
+        new("DM Sans",          "DM Sans"),
+        new("Inter",            "Inter"),
+        new("Montserrat",       "Open Sans"),
+        new("Playfair Display", "Lato"),
+        new("Fraunces",         "Source Serif 4"),
+        new("Syne",             "Inter"),
+    };
+
+    private readonly List<DarkModeOption> _darkModeOptions = new()
+    {
+        new("light",  "Always light",  "Never activates dark mode"),
+        new("dark",   "Always dark",   "Always uses dark colours"),
+        new("system", "Follow system", "Respects the visitor's OS setting"),
+    };
+
+    private string PreviewStyles
+    {
+        get
+        {
+            var pkg = SkinPackages.GetPackage(_form.SkinPackage);
+            return $"--color-primary:{pkg.ColorPrimary};" +
+                   $"--color-surface:{pkg.ColorSurface};" +
+                   $"--color-background:{pkg.ColorBackground};" +
+                   $"--color-text:{pkg.ColorText};" +
+                   $"--color-text-muted:{pkg.ColorTextMuted};" +
+                   $"--color-border:{pkg.ColorBorder};" +
+                   $"--radius-sm:{pkg.RadiusSm};" +
+                   $"--radius-md:{pkg.RadiusMd};" +
+                   // Apply custom overrides on top
+                   string.Join(";", _overrides
+                       .Where(kv => !string.IsNullOrEmpty(kv.Value))
+                       .Select(kv => $"{kv.Key}:{kv.Value}"));
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // TODO: load current site config from API
+        _form = new SkinEditorForm
+        {
+            SiteName    = State.SiteConfig?.SiteName ?? "My Site",
+            ThemeName   = State.SiteConfig?.ThemeName ?? "Clarity",
+            SkinPackage = State.SiteConfig?.SkinPackage ?? "Slate",
+            DarkMode    = State.SiteConfig?.DarkMode ?? "system",
+            LogoUrl     = State.SiteConfig?.LogoUrl,
+            FaviconUrl  = State.SiteConfig?.FaviconUrl,
+        };
+    }
+
+    private void SelectPackage(string name)
+    {
+        _form.SkinPackage = name;
+        var pkg = SkinPackages.GetPackage(name);
+        _headingFont = pkg.FontHeading;
+        _bodyFont = pkg.FontBody;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        try
+        {
+            // Merge font overrides into token overrides
+            var allOverrides = new Dictionary<string, string>(_overrides);
+            if (_headingFont != SkinPackages.GetPackage(_form.SkinPackage).FontHeading)
+                allOverrides["--font-heading"] = _headingFont;
+            if (_bodyFont != SkinPackages.GetPackage(_form.SkinPackage).FontBody)
+                allOverrides["--font-body"] = _bodyFont;
+
+            var payload = new
+            {
+                _form.SiteName,
+                _form.LogoUrl,
+                _form.FaviconUrl,
+                _form.ThemeName,
+                _form.SkinPackage,
+                _form.DarkMode,
+                SkinJson = allOverrides.Count > 0
+                    ? JsonSerializer.Serialize(allOverrides)
+                    : null
+            };
+
+            // Fix 9: Check response status — the original code discarded the return value
+            // of PutAsync so a 400/403/500 from the server was silently ignored.
+            var saved = await Api.PutAsync("/api/admin/site", payload);
+            if (!saved)
+            {
+                _saveError = "Could not save settings. Check your permissions and try again.";
+                return;
+            }
+            _saveError   = null;
+            _saveSuccess = true;
+            _ = Task.Delay(3000).ContinueWith(_ => { _saveSuccess = false; InvokeAsync(StateHasChanged); });
+
+            // Re-apply skin immediately so the admin sees the effect
+            var newConfig = new SiteConfig(
+                _form.SiteName, _form.LogoUrl, _form.FaviconUrl,
+                _form.ThemeName, _form.SkinPackage,
+                payload.SkinJson, _form.DarkMode);
+
+            State.SetSiteConfig(newConfig);
+            var isDark = _form.DarkMode == "dark";
+            await Skin.ApplyAsync(newConfig, isDark);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    // Preview SVGs (simplified wireframes)
+    private const string ClaritySvg = @"
+        <svg viewBox='0 0 80 56' xmlns='http://www.w3.org/2000/svg'>
+          <rect width='80' height='56' rx='4' fill='var(--color-background,#fff)'/>
+          <rect width='20' height='56' rx='0' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='3' y='4' width='14' height='3' rx='1' fill='var(--color-primary,#2563eb)'/>
+          <rect x='3' y='11' width='12' height='2' rx='1' fill='var(--color-border,#e2e8f0)'/>
+          <rect x='3' y='15' width='12' height='2' rx='1' fill='var(--color-primary,#2563eb)' opacity='.3'/>
+          <rect x='3' y='19' width='12' height='2' rx='1' fill='var(--color-border,#e2e8f0)'/>
+          <rect x='3' y='23' width='12' height='2' rx='1' fill='var(--color-border,#e2e8f0)'/>
+          <rect x='22' y='4' width='55' height='6' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='24' y='14' width='51' height='18' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='24' y='34' width='24' height='6' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='24' y='14' width='51' height='3' rx='2 2 0 0' fill='var(--color-primary,#2563eb)' opacity='.15'/>
+        </svg>";
+
+    private const string MomentumSvg = @"
+        <svg viewBox='0 0 80 56' xmlns='http://www.w3.org/2000/svg'>
+          <rect width='80' height='56' rx='4' fill='var(--color-background,#fff)'/>
+          <rect width='80' height='10' rx='0' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='3' y='3' width='10' height='4' rx='1' fill='var(--color-primary,#2563eb)'/>
+          <rect x='16' y='4' width='8' height='2' rx='1' fill='var(--color-border,#e2e8f0)'/>
+          <rect x='26' y='4' width='8' height='2' rx='1' fill='var(--color-border,#e2e8f0)'/>
+          <rect x='36' y='4' width='8' height='2' rx='1' fill='var(--color-primary,#2563eb)' opacity='.4'/>
+          <rect x='4'  y='13' width='17' height='10' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='23' y='13' width='17' height='10' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='42' y='13' width='17' height='10' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='61' y='13' width='15' height='10' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='4'  y='26' width='72' height='18' rx='2' fill='var(--color-surface,#f8fafc)'/>
+        </svg>";
+
+    private const string FocusSvg = @"
+        <svg viewBox='0 0 80 56' xmlns='http://www.w3.org/2000/svg'>
+          <rect width='80' height='56' rx='4' fill='var(--color-background,#fff)'/>
+          <rect width='80' height='8' rx='0' fill='var(--color-background,#fff)' stroke='var(--color-border,#e2e8f0)' stroke-width='.5'/>
+          <rect x='3' y='2' width='12' height='4' rx='1' fill='var(--color-primary,#2563eb)'/>
+          <rect x='50' y='2.5' width='18' height='3' rx='1.5' fill='var(--color-surface,#f8fafc)' stroke='var(--color-border,#e2e8f0)' stroke-width='.5'/>
+          <rect x='10' y='14' width='60' height='4' rx='1' fill='var(--color-border,#e2e8f0)' opacity='.5'/>
+          <rect x='10' y='22' width='60' height='14' rx='2' fill='var(--color-surface,#f8fafc)'/>
+          <rect x='10' y='40' width='30' height='4' rx='1' fill='var(--color-border,#e2e8f0)' opacity='.5'/>
+        </svg>";
+
+    // ── Inner types ──────────────────────────────────────────────────────────
+
+    private class SkinEditorForm
+    {
+        public string  SiteName    { get; set; } = "My Site";
+        public string? LogoUrl     { get; set; }
+        public string? FaviconUrl  { get; set; }
+        public string  ThemeName   { get; set; } = "Clarity";
+        public string  SkinPackage { get; set; } = "Slate";
+        public string  DarkMode    { get; set; } = "system";
+    }
+
+    private record ThemeOption(string Name, string Description, string PreviewSvg);
+    private record FontPair(string Heading, string Body);
+    private record DarkModeOption(string Value, string Label, string Description);
+}

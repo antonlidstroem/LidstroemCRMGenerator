@@ -1,0 +1,19 @@
+@using Lidstroem.Frontend.Core.Services
+@inherits LayoutComponentBase
+@inject AppState State
+
+<div class="auth-shell">
+    <div class="auth-brand">
+        @if (State.SiteConfig?.LogoUrl != null)
+        {
+            <img src="@State.SiteConfig.LogoUrl" alt="@State.SiteConfig?.SiteName" class="auth-logo" />
+        }
+        else
+        {
+            <span class="auth-wordmark">@(State.SiteConfig?.SiteName ?? "Lidstroem")</span>
+        }
+    </div>
+    <main class="auth-content">
+        @Body
+    </main>
+</div>

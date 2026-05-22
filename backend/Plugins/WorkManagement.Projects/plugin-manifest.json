@@ -1,0 +1,33 @@
+{
+  "pluginKey": "WorkManagement.Projects",
+  "displayName": "Projects",
+  "description": "Manages projects. A project can have many activities and donations.",
+  "version": "1.0.0",
+  "routePrefix": "projects",
+  "entities": [
+    {
+      "name": "Project",
+      "hasGdprHandler": false,
+      "hasLinkResolver": true,
+      "hasExtensionProvider": [],
+      "polymorphicRelations": [],
+      "fields": [
+        { "name": "Title",       "type": "Text",     "required": true,  "maxLength": 300 },
+        { "name": "Description", "type": "RichText", "required": false }
+      ]
+    }
+  ],
+  "permissions": [
+    { "name": "Projects.View",          "category": "Projects" },
+    { "name": "Projects.Create",        "category": "Projects" },
+    { "name": "Projects.Edit",          "category": "Projects" },
+    { "name": "Projects.Delete",        "category": "Projects" },
+    { "name": "Projects.ManageMembers", "category": "Projects" }
+  ],
+  "listensToEvents": [],
+  "publishesEvents": ["ProjectCreatedEvent", "ProjectDeletedEvent"],
+  "navGroup": "Work Management",
+  "navOrder": 20,
+  "dependsOn": [],
+  "optionallyExtends": []
+}

@@ -1,0 +1,225 @@
+@page "/admin/tenants"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+
+<PageTitle>Tenants</PageTitle>
+
+@if (!Permissions.Has("SuperAdmin.ManageTenants"))
+{
+    <div class="empty-state">
+        <p>You do not have permission to manage tenants.</p>
+    </div>
+    return;
+}
+
+<div class="page-header">
+    <h1 class="page-title">Tenants</h1>
+    <button class="btn btn-primary" @onclick="OpenCreate">
+        <span class="btn-icon">+</span> New tenant
+    </button>
+</div>
+
+@if (_loading)
+{
+    <div class="loading-indicator">Loading…</div>
+}
+else if (_tenants.Count == 0)
+{
+    <div class="empty-state">No tenants found.</div>
+}
+else
+{
+    <div class="entity-table-wrap">
+        <table class="entity-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Contact email</th>
+                    <th>Plugins</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var t in _tenants)
+                {
+                    <tr>
+                        <td class="cell-primary">@Name(t)</td>
+                        <td>@(ContactEmail(t) ?? "—")</td>
+                        <td>@PluginCount(t)</td>
+                        <td>
+                            @if (IsActive(t))
+                            {
+                                <span class="badge badge-green">Active</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-grey">Inactive</span>
+                            }
+                        </td>
+                        <td class="cell-actions">
+                            <button class="btn btn-sm" @onclick="() => OpenDetail(Id(t))">Edit</button>
+                            @if (IsActive(t))
+                            {
+                                <button class="btn btn-sm btn-ghost"
+                                        @onclick="() => ToggleActive(t, false)"
+                                        disabled="@_busy">
+                                    Deactivate
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn btn-sm btn-ghost"
+                                        @onclick="() => ToggleActive(t, true)"
+                                        disabled="@_busy">
+                                    Activate
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@if (_showCreate)
+{
+    <div class="modal-backdrop" @onclick="CloseCreate">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">New tenant</h2>
+                <button class="modal-close" @onclick="CloseCreate">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-field">
+                    <label class="field-label">Name <span class="required">*</span></label>
+                    <input class="field-input" @bind="_newName" placeholder="Tenant name" />
+                </div>
+                <div class="form-field">
+                    <label class="field-label">Contact email</label>
+                    <input class="field-input" type="email" @bind="_newEmail" placeholder="contact@example.com" />
+                </div>
+                <div class="form-field">
+                    <label class="field-label">Description</label>
+                    <textarea class="field-input" @bind="_newDescription" rows="3" placeholder="Optional description"></textarea>
+                </div>
+                <div class="form-field">
+                    <label class="field-label">Actor quota</label>
+                    <input class="field-input" type="number" @bind="_newActorQuota" placeholder="Unlimited" min="1" max="100000" />
+                </div>
+                @if (_createError != null)
+                {
+                    <div class="form-error">@_createError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CloseCreate">Cancel</button>
+                <button class="btn btn-primary"
+                        @onclick="CreateTenant"
+                        disabled="@(_busy || string.IsNullOrWhiteSpace(_newName))">
+                    @(_busy ? "Saving…" : "Create tenant")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<JsonElement> _tenants = new();
+    private bool _loading = true;
+    private bool _busy;
+    private bool _showCreate;
+    private string _newName = string.Empty;
+    private string _newEmail = string.Empty;
+    private string _newDescription = string.Empty;
+    private int? _newActorQuota;
+    private string? _createError;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        var result = await Api.GetListAsync("/api/admin/tenants");
+        _tenants = result ?? new();
+        _loading = false;
+    }
+
+    private void OpenCreate()
+    {
+        _newName = string.Empty;
+        _newEmail = string.Empty;
+        _newDescription = string.Empty;
+        _newActorQuota = null;
+        _createError = null;
+        _showCreate = true;
+    }
+
+    private void CloseCreate() => _showCreate = false;
+
+    private async Task CreateTenant()
+    {
+        if (string.IsNullOrWhiteSpace(_newName)) return;
+        _busy = true;
+        _createError = null;
+
+        var dto = new
+        {
+            Name = _newName.Trim(),
+            ContactEmail = string.IsNullOrWhiteSpace(_newEmail) ? null : _newEmail.Trim(),
+            Description = string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription.Trim(),
+            ActorQuota = _newActorQuota
+        };
+
+        var result = await Api.PostAsync("/api/admin/tenants", dto);
+        _busy = false;
+
+        if (result == null)
+        {
+            _createError = "Failed to create tenant. Check that the name is unique.";
+            return;
+        }
+
+        _showCreate = false;
+        await LoadAsync();
+    }
+
+    private async Task ToggleActive(JsonElement t, bool activate)
+    {
+        _busy = true;
+        var id = Id(t);
+        var url = activate
+            ? $"/api/admin/tenants/{id}/activate"
+            : $"/api/admin/tenants/{id}/deactivate";
+        await Api.PutAsync(url, new { });
+        await LoadAsync();
+        _busy = false;
+    }
+
+    private void OpenDetail(int id) => Nav.NavigateTo($"/admin/tenants/{id}");
+
+    // ── helpers ────────────────────────────────────────────────────────────────
+
+    private static int Id(JsonElement t) =>
+        t.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+
+    private static string Name(JsonElement t) =>
+        t.TryGetProperty("name", out var p) ? p.GetString() ?? "—" : "—";
+
+    private static string? ContactEmail(JsonElement t) =>
+        t.TryGetProperty("contactEmail", out var p) ? p.GetString() : null;
+
+    private static bool IsActive(JsonElement t) =>
+        t.TryGetProperty("isActive", out var p) && p.GetBoolean();
+
+    private static int PluginCount(JsonElement t)
+    {
+        if (!t.TryGetProperty("pluginAssignments", out var arr)) return 0;
+        return arr.EnumerateArray().Count(a =>
+            a.TryGetProperty("isEnabled", out var e) && e.GetBoolean());
+    }
+}
