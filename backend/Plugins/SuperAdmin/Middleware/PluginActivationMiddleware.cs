@@ -11,7 +11,8 @@ public class PluginActivationMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly IMemoryCache _cache;
-    private readonly IEnumerable<IPluginMetadata> _pluginMetadata;
+    // Pre-built O(1) lookup: routePrefix (lowercase) → pluginKey
+    private readonly Dictionary<string, string> _routeToPluginKey;
 
     public PluginActivationMiddleware(
         RequestDelegate next,
@@ -20,7 +21,10 @@ public class PluginActivationMiddleware
     {
         _next = next;
         _cache = cache;
-        _pluginMetadata = pluginMetadata;
+        _routeToPluginKey = pluginMetadata
+            .GroupBy(m => m.RoutePrefix.ToLowerInvariant())
+            .ToDictionary(g => g.Key, g => g.First().PluginKey,
+                StringComparer.OrdinalIgnoreCase);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -56,10 +60,7 @@ public class PluginActivationMiddleware
         if (segments == null || segments.Length < 2) return null;
         if (!string.Equals(segments[0], "api", StringComparison.OrdinalIgnoreCase)) return null;
 
-        var routePrefix = segments[1].ToLowerInvariant();
-        return _pluginMetadata
-            .FirstOrDefault(m => string.Equals(m.RoutePrefix, routePrefix, StringComparison.OrdinalIgnoreCase))
-            ?.PluginKey;
+        return _routeToPluginKey.TryGetValue(segments[1], out var key) ? key : null;
     }
 
     private async Task<bool> IsPluginEnabledAsync(

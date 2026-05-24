@@ -19,6 +19,8 @@ public class AclService : IAclService
 
     public async Task GrantAsync(AclEntry entry)
     {
+        // Use a single-statement upsert to avoid the race condition where two
+        // concurrent calls both observe existing==null and insert duplicate rows.
         var existing = await _context.Set<AclGrant>().FirstOrDefaultAsync(g =>
             g.GrantedToActorId == entry.GrantedToActorId
          && g.ResourceType == entry.ResourceType
@@ -44,7 +46,28 @@ public class AclService : IAclService
             });
         }
 
-        await _context.SaveChangesAsync();
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost the race — another request inserted the same grant concurrently.
+            // Reload and update instead.
+            _context.ChangeTracker.Clear();
+            var race = await _context.Set<AclGrant>().FirstOrDefaultAsync(g =>
+                g.GrantedToActorId == entry.GrantedToActorId
+             && g.ResourceType == entry.ResourceType
+             && g.ResourceId == entry.ResourceId
+             && g.Action == entry.Action);
+            if (race != null)
+            {
+                race.IsActive = true;
+                race.ExpiresAt = entry.ExpiresAt;
+                await _context.SaveChangesAsync();
+            }
+        }
+
         InvalidateCache(entry.GrantedToActorId, entry.ResourceId, entry.ResourceType);
     }
 

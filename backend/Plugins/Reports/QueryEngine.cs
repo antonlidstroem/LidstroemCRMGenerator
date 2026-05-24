@@ -218,10 +218,17 @@ public class QueryEngine
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // Cache property lookups per type to avoid repeated reflection on hot paths.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), PropertyInfo?>
+        _propCache = new();
+
     private static object? GetPropertyValue(object obj, string propName)
     {
-        var prop = obj.GetType().GetProperty(
-            propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        var prop = _propCache.GetOrAdd(
+            (obj.GetType(), propName),
+            key => key.Item1.GetProperty(
+                key.Item2,
+                BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase));
         return prop?.GetValue(obj);
     }
 
@@ -250,14 +257,6 @@ public class QueryEngine
         if (t == typeof(decimal) || t == typeof(double) || t == typeof(float)) return QueryColumnType.Decimal;
         if (t == typeof(DateTime) || t == typeof(DateTimeOffset)) return QueryColumnType.DateTime;
         return QueryColumnType.Text;
-    }
-
-    // Static version used inside predicates
-    private static object? GetPropertyValueStatic(object obj, string propName)
-    {
-        var prop = obj.GetType().GetProperty(
-            propName, BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-        return prop?.GetValue(obj);
     }
 
     // Compares two values numerically if possible, otherwise as strings.

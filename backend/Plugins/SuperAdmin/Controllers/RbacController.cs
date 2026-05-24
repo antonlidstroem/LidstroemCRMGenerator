@@ -93,4 +93,22 @@ public class RbacController : ControllerBase
     public async Task<ActionResult<IReadOnlyCollection<string>>> GetActorPermissions(
         int actorId, [FromQuery] Guid tenantId) =>
         Ok(await _permissionService.GetPermissionsAsync(actorId, tenantId));
+
+    /// <summary>
+    /// Returns the calling actor's own permissions. No elevated permission required —
+    /// every authenticated user may query their own permissions.
+    /// Used by the frontend PermissionService at boot.
+    /// Previously the frontend called /actor/{id}/permissions which requires
+    /// SuperAdmin.ManageTenants — non-admin users got 403, leaving _permissions
+    /// null and hiding all permission-gated UI for every normal user.
+    /// </summary>
+    [HttpGet("my-permissions")]
+    [Authorize]
+    public async Task<ActionResult<IReadOnlyCollection<string>>> GetMyPermissions(
+        [FromQuery] Guid tenantId)
+    {
+        var sub = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+        if (!int.TryParse(sub, out var actorId)) return Unauthorized();
+        return Ok(await _permissionService.GetPermissionsAsync(actorId, tenantId));
+    }
 }

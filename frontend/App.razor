@@ -43,23 +43,33 @@ else
     {
         State.SetLoading(true);
 
-        _tenantSlug = await ResolveSlugAsync();
-        State.SetTenantSlug(_tenantSlug);
+        try
+        {
+            _tenantSlug = await ResolveSlugAsync();
+            State.SetTenantSlug(_tenantSlug);
 
-        // Boot order matters:
-        // 1. Skin — applied before first render to prevent FOUC
-        // 2. Auth — restores JWT from storage
-        // 3. Permissions — only if authenticated
-        // 4. Custom pages — loaded for all visitors (routes affect layout)
-        await BootstrapSkinAsync(_tenantSlug);
-        await Auth.InitializeAsync();
+            // Boot order matters:
+            // 1. Skin — applied before first render to prevent FOUC
+            // 2. Auth — restores JWT from storage
+            // 3. Permissions — only if authenticated
+            // 4. Custom pages — loaded for all visitors (routes affect layout)
+            await BootstrapSkinAsync(_tenantSlug);
+            await Auth.InitializeAsync();
 
-        if (Auth.IsAuthenticated)
-            await Permissions.LoadAsync();
+            if (Auth.IsAuthenticated)
+                await Permissions.LoadAsync();
 
-        await CustomPages.LoadAsync(/* injected ApiClient via DI */ GetApiClient(), _tenantSlug);
-
-        State.SetBootstrapped();
+            await CustomPages.LoadAsync(/* injected ApiClient via DI */ GetApiClient(), _tenantSlug);
+        }
+        catch (Exception ex)
+        {
+            // Log to console but never let the app stay frozen on the boot spinner.
+            Console.Error.WriteLine($"[App] Boot error: {ex.Message}");
+        }
+        finally
+        {
+            State.SetBootstrapped();
+        }
     }
 
     // ApiClient is not directly injectable here because App.razor bootstraps
@@ -107,7 +117,9 @@ else
         try
         {
             var apiBase = Config["ApiBaseUrl"] ?? Nav.BaseUri;
+            if (string.IsNullOrWhiteSpace(apiBase)) return null;
             using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
+            http.Timeout = TimeSpan.FromSeconds(3); // don't stall boot for long
             var response = await http.GetAsync($"/pub/site/by-host/{Uri.EscapeDataString(host)}");
             if (!response.IsSuccessStatusCode) return null;
             var dto = await response.Content.ReadFromJsonAsync<SlugDto>();
@@ -121,18 +133,22 @@ else
         try
         {
             var apiBase = Config["ApiBaseUrl"] ?? Nav.BaseUri;
-            using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
-            var config = await http.GetFromJsonAsync<SiteConfig>($"/pub/site/{slug}");
-
-            if (config != null)
+            if (!string.IsNullOrWhiteSpace(apiBase))
             {
-                State.SetSiteConfig(config);
-                var prefersDark = config.DarkMode == "dark" ||
-                    (config.DarkMode == "system" &&
-                     await JS.InvokeAsync<bool>("matchMedia", "(prefers-color-scheme: dark)"));
-                await Skin.ApplyAsync(config, prefersDark);
-                await JS.InvokeVoidAsync("lidstroem.setSiteMetadata", config.SiteName, config.FaviconUrl);
-                return;
+                using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
+                http.Timeout = TimeSpan.FromSeconds(3);
+                var config = await http.GetFromJsonAsync<SiteConfig>($"/pub/site/{slug}");
+
+                if (config != null)
+                {
+                    State.SetSiteConfig(config);
+                    var prefersDark = config.DarkMode == "dark" ||
+                        (config.DarkMode == "system" &&
+                         await JS.InvokeAsync<bool>("matchMedia", "(prefers-color-scheme: dark)"));
+                    await Skin.ApplyAsync(config, prefersDark);
+                    await JS.InvokeVoidAsync("lidstroem.setSiteMetadata", config.SiteName, config.FaviconUrl);
+                    return;
+                }
             }
         }
         catch { }

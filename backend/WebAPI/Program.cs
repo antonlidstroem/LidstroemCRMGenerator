@@ -1,7 +1,6 @@
 using System.Reflection;
 using System.Threading.RateLimiting;
 using Lidstroem.Infrastructure;
-using Lidstroem.Infrastructure.Realtime;
 using Lidstroem.Plugins.Communication;
 using Lidstroem.Plugins.GDPR;
 using Lidstroem.Plugins.Invitations.Services;
@@ -10,27 +9,31 @@ using Lidstroem.Plugins.Schema;
 using Lidstroem.Plugins.SuperAdmin;
 using Lidstroem.Core.Interfaces;
 using Lidstroem.Plugins.ACL.Services;
-using MediatR;
 using Microsoft.AspNetCore.RateLimiting;
 using Scalar.AspNetCore;
-using Lidstroem.Plugins.Reports;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Infrastructure (auth, EF, RBAC, SignalR, realtime notifier) ──────────────
+// ── Infrastructure (auth, EF, RBAC, interceptors, link resolvers, etc.) ──────
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// ── CORS — allow Blazor WASM frontend + WebSocket upgrade ────────────────────
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// In Development: read AllowedCorsOrigins from appsettings.Development.json.
+// This avoids having to update Program.cs every time the dev frontend port changes
+// (Blazor WASM dev server picks a random port on each machine/run).
+// In Production: set App:FrontendUrl to your deployed frontend URL.
+
+var allowedOrigins = builder.Environment.IsDevelopment()
+    ? builder.Configuration.GetSection("AllowedCorsOrigins").Get<string[]>()
+      ?? new[] { builder.Configuration["App:FrontendUrl"] ?? "https://localhost:5001" }
+    : new[] { builder.Configuration["App:FrontendUrl"]
+              ?? throw new InvalidOperationException("App:FrontendUrl must be set in production.") };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
-        policy.WithOrigins(
-                builder.Configuration["App:FrontendUrl"] ?? "https://localhost:5001",
-                "http://localhost:5000",
-                "https://localhost:5001",
-                "http://localhost:7200"
-              )
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod()
               .AllowCredentials(); // Required for SignalR WebSocket handshake
@@ -60,7 +63,7 @@ builder.Services.AddRateLimiter(options =>
     };
 });
 
-// ── MediatR — scan all Lidstroem assemblies + register broadcast behaviour ───
+// ── MediatR — scan all Lidstroem assemblies ───────────────────────────────────
 var lidstroemAssemblies = AppDomain.CurrentDomain.GetAssemblies()
     .Where(a => a.GetName().Name?.StartsWith("Lidstroem") == true)
     .ToArray();
@@ -70,10 +73,6 @@ builder.Services.AddMediatR(cfg =>
     cfg.RegisterServicesFromAssembly(Assembly.GetExecutingAssembly());
     foreach (var assembly in lidstroemAssemblies)
         cfg.RegisterServicesFromAssembly(assembly);
-
-    // Automatically broadcast realtime events for any IRequest that also
-    // implements IRealtimeBroadcast — plugins opt in, no boilerplate required.
-    cfg.AddOpenBehavior(typeof(RealtimeBroadcastBehavior<,>));
 });
 
 // ── Plugin feature services ───────────────────────────────────────────────────
@@ -82,7 +81,7 @@ builder.Services.AddResources(builder.Environment);
 builder.Services.AddSchemaRegistry();
 builder.Services.AddGdpr();
 builder.Services.AddSuperAdmin();
-builder.Services.AddReports();
+
 builder.Services.AddScoped<IAclService, Lidstroem.Plugins.ACL.Services.AclService>();
 builder.Services.AddScoped<InvitationService>();
 
@@ -121,10 +120,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseSuperAdmin();
 app.MapControllers();
-
-// ── SignalR hub ───────────────────────────────────────────────────────────────
-app.MapLidstroemHubs();
-
 app.Run();
 
 public partial class Program { }

@@ -86,8 +86,6 @@ public class SystemSeedService : IHostedService
     {
         var adminEmail = _config["SuperAdmin:Email"] ?? "admin@lidstroem.dev";
 
-        // FIX #16: Never silently fall back to a hardcoded password in production.
-        // The "ChangeMe123!" default is only acceptable for local dev.
         string adminPassword;
         if (_env.IsDevelopment())
         {
@@ -109,52 +107,65 @@ public class SystemSeedService : IHostedService
 
         if (exists) return;
 
-        var actor = new Actor
+        // Wrap everything in a transaction so a mid-seed crash doesn't leave
+        // an Actor without credentials or a Role without permissions.
+        await using var tx = await context.Database.BeginTransactionAsync(ct);
+        try
         {
-            DisplayName = "Super Admin",
-            Email = adminEmail,
-            TenantId = TenantConstants.SystemTenantId
-        };
+            var actor = new Actor
+            {
+                DisplayName = "Super Admin",
+                Email = adminEmail,
+                TenantId = TenantConstants.SystemTenantId
+            };
 
-        context.Set<Actor>().Add(actor);
-        await context.SaveChangesAsync(ct);
+            context.Set<Actor>().Add(actor);
+            await context.SaveChangesAsync(ct);
 
-        context.Set<ActorCredentials>().Add(new ActorCredentials
+            context.Set<ActorCredentials>().Add(new ActorCredentials
+            {
+                ActorId = actor.Id,
+                Identifier = adminEmail,
+                PasswordHash = hasher.Hash(adminPassword),
+                TenantId = TenantConstants.SystemTenantId
+            });
+
+            await context.SaveChangesAsync(ct);
+
+            var permissions = await context.Set<Permission>().IgnoreQueryFilters()
+                .Where(p => p.IsActive).ToListAsync(ct);
+
+            var role = new Role
+            {
+                Name = "SuperAdmin",
+                DisplayName = "Super Administrator",
+                IsSystemRole = true,
+                TenantId = TenantConstants.SystemTenantId,
+                RolePermissions = permissions
+                    .Select(p => new RolePermission { Permission = p })
+                    .ToList()
+            };
+
+            context.Set<Role>().Add(role);
+            await context.SaveChangesAsync(ct);
+
+            context.Set<ActorRoleAssignment>().Add(new ActorRoleAssignment
+            {
+                ActorId = actor.Id,
+                RoleId = role.Id,
+                TenantId = TenantConstants.SystemTenantId
+            });
+
+            await context.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            _logger.LogInformation("[Seed] SuperAdmin created: {Email}", adminEmail);
+        }
+        catch
         {
-            ActorId = actor.Id,
-            Identifier = adminEmail,
-            PasswordHash = hasher.Hash(adminPassword),
-            TenantId = TenantConstants.SystemTenantId
-        });
-
-        await context.SaveChangesAsync(ct);
-
-        var permissions = await context.Set<Permission>().IgnoreQueryFilters()
-            .Where(p => p.IsActive).ToListAsync(ct);
-
-        var role = new Role
-        {
-            Name = "SuperAdmin",
-            DisplayName = "Super Administrator",
-            IsSystemRole = true,
-            TenantId = TenantConstants.SystemTenantId,
-            RolePermissions = permissions
-                .Select(p => new RolePermission { Permission = p })
-                .ToList()
-        };
-
-        context.Set<Role>().Add(role);
-        await context.SaveChangesAsync(ct);
-
-        context.Set<ActorRoleAssignment>().Add(new ActorRoleAssignment
-        {
-            ActorId = actor.Id,
-            RoleId = role.Id,
-            TenantId = TenantConstants.SystemTenantId
-        });
-
-        await context.SaveChangesAsync(ct);
-        _logger.LogInformation("[Seed] SuperAdmin created: {Email}", adminEmail);
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

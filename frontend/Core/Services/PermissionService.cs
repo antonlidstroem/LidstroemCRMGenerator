@@ -23,8 +23,12 @@ public class PermissionService
     {
         if (_auth.ActorId == null || _auth.TenantId == null) return;
 
+        // Use /my-permissions — a self-serve endpoint any authenticated user can call.
+        // The previous endpoint (/actor/{id}/permissions) requires SuperAdmin.ManageTenants,
+        // so non-admin users received 403 and _permissions stayed null, making Has() always
+        // return false and hiding all permission-gated UI.
         var response = await _api.GetListAsync(
-            $"/api/rbac/actor/{_auth.ActorId}/permissions?tenantId={_auth.TenantId}");
+            $"/api/rbac/my-permissions?tenantId={_auth.TenantId}");
 
         _permissions = response != null
             ? new HashSet<string>(

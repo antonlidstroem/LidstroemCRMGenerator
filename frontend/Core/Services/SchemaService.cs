@@ -18,31 +18,26 @@ public class SchemaService
     {
         if (_cache != null) return _cache;
 
-        var items = await _api.GetListAsync("/api/schema");
-        if (items == null) return _cache = new Dictionary<string, EntitySchema>();
-
-        // The schema endpoint returns a dictionary keyed by EntityType.
-        // ApiClient.GetListAsync returns List<JsonElement>. We need to handle
-        // both a JSON object (dict) and a JSON array depending on the endpoint shape.
-        // The /api/schema endpoint returns an object — re-fetch with GetOneAsync.
+        // /api/schema returns a JSON object keyed by EntityType.
+        // GetOneAsync is the correct call — GetListAsync was previously called first
+        // and then discarded, making two unnecessary HTTP requests on every cache miss.
         var obj = await _api.GetOneAsync("/api/schema");
+
+        _cache = new Dictionary<string, EntitySchema>(StringComparer.OrdinalIgnoreCase);
+
         if (obj.HasValue && obj.Value.ValueKind == JsonValueKind.Object)
         {
-            _cache = new Dictionary<string, EntitySchema>(StringComparer.OrdinalIgnoreCase);
+            var options = new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            };
             foreach (var prop in obj.Value.EnumerateObject())
             {
-                var schema = prop.Value.Deserialize<EntitySchema>(new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true,
-                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-                });
+                var schema = prop.Value.Deserialize<EntitySchema>(options);
                 if (schema != null)
                     _cache[prop.Name] = schema;
             }
-        }
-        else
-        {
-            _cache = new Dictionary<string, EntitySchema>();
         }
 
         return _cache;

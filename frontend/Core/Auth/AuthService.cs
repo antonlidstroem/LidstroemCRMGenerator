@@ -57,8 +57,13 @@ public class AuthService
 
     public async Task<bool> LoginAsync(string identifier, string password)
     {
-        var response = await _http.PostAsJsonAsync("/api/auth/login",
-            new LoginRequest(identifier, password));
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.PostAsJsonAsync("/api/auth/login",
+                new LoginRequest(identifier, password));
+        }
+        catch { return false; }
 
         if (!response.IsSuccessStatusCode) return false;
 
@@ -95,14 +100,30 @@ public class AuthService
     {
         if (string.IsNullOrEmpty(_refreshToken)) return false;
 
-        var response = await _http.PostAsJsonAsync("/api/auth/refresh",
-            new { RefreshToken = _refreshToken });
-
-        if (!response.IsSuccessStatusCode)
+        HttpResponseMessage response;
+        try
         {
+            response = await _http.PostAsJsonAsync("/api/auth/refresh",
+                new { RefreshToken = _refreshToken });
+        }
+        catch
+        {
+            // Backend unreachable (network error / server down).
+            // Don't clear tokens — the session may still be valid once the server
+            // comes back. Return false so callers treat this as unauthenticated
+            // for now without permanently destroying the stored refresh token.
+            return false;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+         || response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+        {
+            // Refresh token is revoked or expired — clear and force re-login.
             await ClearTokensAsync();
             return false;
         }
+
+        if (!response.IsSuccessStatusCode) return false;
 
         var tokens = await response.Content.ReadFromJsonAsync<TokenResponse>();
         if (tokens == null) return false;

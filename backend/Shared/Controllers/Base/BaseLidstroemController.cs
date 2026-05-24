@@ -45,7 +45,7 @@ public abstract class BaseLidstroemController<T> : ControllerBase
         _context.Set<T>().Add(entity);
         await _context.SaveChangesAsync();
         await OnAfterCreate(entity);
-        await BroadcastAsync(entity.Id, ChangeType.Created);
+        BroadcastFireAndForget(entity.Id, ChangeType.Created);
         return CreatedAtAction(GetCreatedAtActionName(), new { id = entity.Id }, entity);
     }
 
@@ -56,7 +56,7 @@ public abstract class BaseLidstroemController<T> : ControllerBase
         await MapDtoToEntity(dto, entity);
         await OnBeforeUpdate(entity);
         await _context.SaveChangesAsync();
-        await BroadcastAsync(id, ChangeType.Updated);
+        BroadcastFireAndForget(id, ChangeType.Updated);
         return NoContent();
     }
 
@@ -67,7 +67,7 @@ public abstract class BaseLidstroemController<T> : ControllerBase
         await OnBeforeDelete(entity);
         _context.Set<T>().Remove(entity);
         await _context.SaveChangesAsync();
-        await BroadcastAsync(id, ChangeType.Deleted);
+        BroadcastFireAndForget(id, ChangeType.Deleted);
         return NoContent();
     }
 
@@ -90,21 +90,22 @@ public abstract class BaseLidstroemController<T> : ControllerBase
 
     // ── Realtime broadcast ────────────────────────────────────────────────────
 
-    private Task BroadcastAsync(int entityId, ChangeType changeType)
+    private void BroadcastFireAndForget(int entityId, ChangeType changeType)
     {
+        // Intentional fire-and-forget: a broadcast failure must never affect the HTTP response.
+        // We capture tenantId before the task runs so we don't access HttpContext after disposal.
         try
         {
             var tenantId = _tenantContext.TenantId;
-            return _realtime.NotifyEntityChangedAsync(
-                tenantId,
-                typeof(T).Name,
-                entityId,
-                changeType);
+            _ = _realtime
+                .NotifyEntityChangedAsync(tenantId, typeof(T).Name, entityId, changeType)
+                .ContinueWith(
+                    t => { /* swallow — already logged inside SignalRRealtimeNotifier */ },
+                    TaskContinuationOptions.OnlyOnFaulted);
         }
         catch
         {
-            // Never let a broadcast failure affect the HTTP response.
-            return Task.CompletedTask;
+            // Swallow any synchronous exception from TenantId resolution or notifier setup.
         }
     }
 }

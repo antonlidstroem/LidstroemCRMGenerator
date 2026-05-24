@@ -39,14 +39,23 @@ public class JwtAuthProvider : IAuthProvider
     }
     private string Issuer => _config["Auth:Jwt:Issuer"] ?? "lidstroem";
     private string Audience => _config["Auth:Jwt:Audience"] ?? "lidstroem";
-    private int AccessMinutes => int.Parse(_config["Auth:Jwt:AccessTokenMinutes"] ?? "15");
-    private int RefreshDays => int.Parse(_config["Auth:Jwt:RefreshTokenDays"] ?? "30");
+
+    private readonly int _accessMinutes;
+    private readonly int _refreshDays;
 
     public JwtAuthProvider(DbContext context, IPasswordHasher hasher, IConfiguration config)
     {
         _context = context;
         _hasher = hasher;
         _config = config;
+
+        // Validate and parse token lifetimes at construction so a misconfigured
+        // value fails fast at startup rather than throwing FormatException on the
+        // first login attempt.
+        _accessMinutes = int.TryParse(config["Auth:Jwt:AccessTokenMinutes"], out var am) && am > 0
+            ? am : 15;
+        _refreshDays = int.TryParse(config["Auth:Jwt:RefreshTokenDays"], out var rd) && rd > 0
+            ? rd : 30;
     }
 
     public async Task<TokenPair?> AuthenticateAsync(string identifier, string secret)
@@ -114,7 +123,7 @@ public class JwtAuthProvider : IAuthProvider
 
     private async Task<TokenPair> IssueTokenPairAsync(ActorCredentials credentials)
     {
-        var expiry = DateTime.UtcNow.AddMinutes(AccessMinutes);
+        var expiry = DateTime.UtcNow.AddMinutes(_accessMinutes);
         var accessToken = BuildJwt(credentials, expiry);
         var refreshToken = await StoreRefreshTokenAsync(credentials.Id);
         return new TokenPair(accessToken, refreshToken, expiry);
@@ -147,7 +156,7 @@ public class JwtAuthProvider : IAuthProvider
         {
             ActorCredentialsId = credentialsId,
             Token = tokenValue,
-            ExpiresAt = DateTime.UtcNow.AddDays(RefreshDays)
+            ExpiresAt = DateTime.UtcNow.AddDays(_refreshDays)
         });
 
         await _context.SaveChangesAsync();

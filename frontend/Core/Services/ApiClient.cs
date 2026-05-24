@@ -68,19 +68,36 @@ public class ApiClient
     private async Task<HttpResponseMessage> SendAsync(
         HttpMethod method, string url, object? body = null)
     {
-        var request = BuildRequest(method, url, body);
-        var response = await _http.SendAsync(request);
+        HttpResponseMessage response;
+        HttpRequestMessage request;
+        try
+        {
+            request = BuildRequest(method, url, body);
+            response = await _http.SendAsync(request);
+        }
+        catch (Exception ex)
+        {
+            // Network error (ERR_CONNECTION_REFUSED, timeout, etc.)
+            // Return a synthetic 503 so callers get null/false without crashing.
+            Console.Error.WriteLine($"[ApiClient] Network error {method} {url}: {ex.Message}");
+            return new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable);
+        }
 
         if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
             var refreshed = await _auth.TryRefreshAsync();
             if (refreshed)
             {
-                // Safe to rebuild the request: JsonContent.Create() serialises the body
-                // object fresh each time — it does not consume a one-time stream.
-                // The original HttpRequestMessage cannot be reused after SendAsync.
-                request = BuildRequest(method, url, body);
-                response = await _http.SendAsync(request);
+                try
+                {
+                    request = BuildRequest(method, url, body);
+                    response = await _http.SendAsync(request);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ApiClient] Retry network error {method} {url}: {ex.Message}");
+                    return new HttpResponseMessage(System.Net.HttpStatusCode.ServiceUnavailable);
+                }
             }
         }
 

@@ -30,12 +30,15 @@ public class InvitationService
         string email, Guid tenantId, int invitedByActorId,
         string? roleName, string baseUrl)
     {
+        // Don't reveal whether the email is already registered — treat both
+        // cases identically from the caller's perspective. The invitation is
+        // simply not created; callers should not surface the reason to end users.
         var existingCredentials = await _context.Set<ActorCredentials>()
             .IgnoreQueryFilters()
             .AnyAsync(c => c.Identifier == email);
 
         if (existingCredentials)
-            throw new InvalidOperationException($"Email '{email}' is already registered.");
+            throw new InvalidOperationException("Invitation could not be created.");
 
         var pending = await _context.Set<Invitation>()
             .Where(i => i.Email == email

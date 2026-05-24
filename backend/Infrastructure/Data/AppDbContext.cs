@@ -57,6 +57,9 @@ public class AppDbContext : DbContext
         RunPluginConfigurators(modelBuilder);
     }
 
+    private static readonly ILogger _pluginLoadLogger =
+        LoggerFactory.Create(b => b.AddConsole()).CreateLogger<AppDbContext>();
+
     private static void LoadPluginAssemblies()
     {
         var foldersToScan = new HashSet<string>
@@ -81,16 +84,11 @@ public class AppDbContext : DbContext
                     if (!AppDomain.CurrentDomain.GetAssemblies().Any(a => a.FullName == name.FullName))
                         Assembly.LoadFrom(dll);
                 }
-                // FIX #14: Only swallow genuinely optional-plugin errors (bad image, version conflict).
-                // Log them at Warning so production failures are visible. Any other exception (e.g.
-                // security policy) is re-thrown to prevent silent misconfiguration.
                 catch (Exception ex) when (ex is BadImageFormatException
                                               or FileLoadException
                                               or FileNotFoundException)
                 {
-                    var logger = LoggerFactory.Create(b => b.AddConsole())
-                                             .CreateLogger<AppDbContext>();
-                    logger.LogWarning(ex, "Failed to load optional plugin assembly {Dll}", dll);
+                    _pluginLoadLogger.LogWarning(ex, "Failed to load optional plugin assembly {Dll}", dll);
                 }
             }
         }
