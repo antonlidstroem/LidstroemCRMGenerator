@@ -13,22 +13,36 @@ public class PermissionService
     private readonly AuthService _auth;
     private HashSet<string>? _permissions;
 
+    // The SuperAdmin actor lives in the system tenant (all-zeros GUID + 1).
+    // When tenant_id is absent from the JWT (superadmin has no normal tenant),
+    // we fall back to this sentinel so the permissions query still fires.
+    private static readonly Guid SystemTenantId = new("00000000-0000-0000-0000-000000000001");
+
     public PermissionService(ApiClient api, AuthService auth)
     {
-        _api  = api;
+        _api = api;
         _auth = auth;
     }
 
     public async Task LoadAsync()
     {
-        if (_auth.ActorId == null || _auth.TenantId == null) return;
+        if (_auth.ActorId == null) return;
+
+        // FIX: SuperAdmin actors are seeded with TenantId = SystemTenantId but
+        // their JWT may carry no tenant_id claim (or an empty one), causing
+        // _auth.TenantId to be null.  In that case fall back to SystemTenantId
+        // so the permissions query always fires — previously the early-return
+        // here left _permissions null, making Has() always return false and
+        // hiding all permission-gated UI (including the Tenants admin link)
+        // for every superadmin login.
+        var tenantId = _auth.TenantId ?? SystemTenantId;
 
         // Use /my-permissions — a self-serve endpoint any authenticated user can call.
         // The previous endpoint (/actor/{id}/permissions) requires SuperAdmin.ManageTenants,
         // so non-admin users received 403 and _permissions stayed null, making Has() always
         // return false and hiding all permission-gated UI.
         var response = await _api.GetListAsync(
-            $"/api/rbac/my-permissions?tenantId={_auth.TenantId}");
+            $"/api/rbac/my-permissions?tenantId={tenantId}");
 
         _permissions = response != null
             ? new HashSet<string>(
