@@ -59,22 +59,62 @@ else
             if (Auth.IsAuthenticated)
                 await Permissions.LoadAsync();
 
-            await CustomPages.LoadAsync(/* injected ApiClient via DI */ GetApiClient(), _tenantSlug);
+            await CustomPages.LoadAsync(GetApiClient(), _tenantSlug);
         }
         catch (Exception ex)
         {
-            // Log to console but never let the app stay frozen on the boot spinner.
             Console.Error.WriteLine($"[App] Boot error: {ex.Message}");
         }
         finally
         {
             State.SetBootstrapped();
         }
+
+        // FIX: Subscribe to auth state changes after boot so that login/logout
+        // triggers a re-render and GetLayout() picks the correct layout immediately.
+        // Without this the layout stays as AuthLayout after login until the user
+        // manually navigates.
+        Auth.AuthStateChanged += OnAuthStateChanged;
+
+        // FIX: Auth guard — redirect any unauthenticated visitor away from
+        // protected routes. /login and /pub/* are always accessible.
+        GuardRoute();
+        Nav.LocationChanged += OnLocationChanged;
     }
 
-    // ApiClient is not directly injectable here because App.razor bootstraps
-    // before the scoped DI scope is fully resolved in some edge cases.
-    // Resolve it from the service provider explicitly.
+    // Called on every navigation event to enforce the auth guard.
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+        => GuardRoute();
+
+    private void GuardRoute()
+    {
+        if (Auth.IsAuthenticated) return;
+
+        var path = new Uri(Nav.Uri).AbsolutePath;
+        var isPublic = path.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
+                    || path.StartsWith("/pub/",  StringComparison.OrdinalIgnoreCase);
+
+        if (!isPublic)
+            Nav.NavigateTo("/login", replace: true);
+    }
+
+    private async void OnAuthStateChanged()
+    {
+        // Reload permissions whenever auth state changes (login / logout).
+        if (Auth.IsAuthenticated)
+            await Permissions.LoadAsync();
+        else
+            Permissions.Clear();
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Auth.AuthStateChanged -= OnAuthStateChanged;
+        Nav.LocationChanged   -= OnLocationChanged;
+    }
+
     [Inject] private ApiClient ApiClient { get; set; } = null!;
     private ApiClient GetApiClient() => ApiClient;
 
@@ -119,7 +159,7 @@ else
             var apiBase = Config["ApiBaseUrl"] ?? Nav.BaseUri;
             if (string.IsNullOrWhiteSpace(apiBase)) return null;
             using var http = new HttpClient { BaseAddress = new Uri(apiBase) };
-            http.Timeout = TimeSpan.FromSeconds(3); // don't stall boot for long
+            http.Timeout = TimeSpan.FromSeconds(3);
             var response = await http.GetAsync($"/pub/site/by-host/{Uri.EscapeDataString(host)}");
             if (!response.IsSuccessStatusCode) return null;
             var dto = await response.Content.ReadFromJsonAsync<SlugDto>();

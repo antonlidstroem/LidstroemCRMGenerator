@@ -2,6 +2,7 @@
 @using Lidstroem.Frontend.Core.Models
 @using Lidstroem.Frontend.Shared
 @inherits LayoutComponentBase
+@implements IDisposable
 @inject SchemaService Schema
 @inject AuthService Auth
 @inject PermissionService Permissions
@@ -42,7 +43,8 @@
             @if (Permissions.Has("SuperAdmin.ManageTenants"))
             {
                 <div class="nav-group-label">Administration</div>
-                <NavItem Href="/admin/tenants" Icon="building-2" Label="Tenants" />
+                <NavItem Href="/admin/tenants" Icon="building-2" Label="Organisations" />
+                <NavItem Href="/admin/actors"  Icon="users"      Label="Users" />
             }
         </nav>
 
@@ -80,7 +82,25 @@
     private List<NavGroupVm> _navGroups = new();
     private bool _sidebarOpen;
 
-    protected override async Task OnInitializedAsync() => await BuildNavAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        // FIX: Subscribe to auth state changes so the nav rebuilds immediately
+        // after login (permissions loaded, schemas available) or logout (nav cleared).
+        Auth.AuthStateChanged += OnAuthStateChanged;
+        await BuildNavAsync();
+    }
+
+    public void Dispose()
+    {
+        Auth.AuthStateChanged -= OnAuthStateChanged;
+    }
+
+    // Triggered by AuthService after login/logout — rebuilds nav and re-renders.
+    private async void OnAuthStateChanged()
+    {
+        await BuildNavAsync();
+        await InvokeAsync(StateHasChanged);
+    }
 
     private async Task BuildNavAsync()
     {

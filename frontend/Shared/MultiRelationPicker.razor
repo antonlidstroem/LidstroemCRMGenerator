@@ -1,0 +1,145 @@
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject SchemaService Schema
+
+@* Multi-relation picker. API matches FieldEditor: Field, Value (comma-sep ids), ValueChanged, Disabled *@
+
+<div class="multi-relation-picker">
+    <div class="selected-tags">
+        @foreach (var tag in _selected)
+        {
+            var tagId = tag.Id;
+            <span class="tag">
+                @tag.Label
+                @if (!Disabled)
+                {
+                    <button type="button" class="tag-remove" @onclick="() => Remove(tagId)">×</button>
+                }
+            </span>
+        }
+        @if (!Disabled)
+        {
+            <input type="text"
+                   class="tag-input"
+                   value="@_search"
+                   @oninput="OnSearchInput"
+                   @onfocus="OpenDropdown"
+                   placeholder="@(_selected.Count == 0 ? "Add " + Field.DisplayName + "…" : "")" />
+        }
+    </div>
+
+    @if (_open && _options.Count > 0)
+    {
+        <ul class="relation-dropdown">
+            @foreach (var opt in _options)
+            {
+                var optId    = opt.Id;
+                var optLabel = opt.Label;
+                <li class="relation-option" @onclick="() => Add(optId, optLabel)">@optLabel</li>
+            }
+        </ul>
+    }
+</div>
+
+@code {
+    // API surface expected by FieldEditor
+    [Parameter, EditorRequired] public FieldDefinition Field  { get; set; } = null!;
+    [Parameter]                 public object?         Value  { get; set; }      // comma-sep ids
+    [Parameter]                 public EventCallback<object?> ValueChanged { get; set; }
+    [Parameter]                 public bool            Disabled { get; set; }
+
+    private string _search = string.Empty;
+    private bool   _open;
+    private List<(int Id, string Label)> _selected = new();
+    private List<(int Id, string Label)> _options  = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var raw = Value?.ToString() ?? string.Empty;
+        if (!string.IsNullOrEmpty(raw) && _selected.Count == 0)
+            await LoadSelectedLabels(raw);
+    }
+
+    private async Task LoadSelectedLabels(string raw)
+    {
+        if (string.IsNullOrEmpty(Field.RelatedEntityType)) return;
+        var relSchema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (relSchema == null) return;
+
+        _selected.Clear();
+        foreach (var part in raw.Split(','))
+        {
+            if (!int.TryParse(part.Trim(), out var id)) continue;
+            var item = await Api.GetOneAsync(relSchema.ApiBasePath + "/" + id);
+            if (item.HasValue) _selected.Add((id, GetLabel(item.Value, relSchema)));
+        }
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        await LoadOptions();
+    }
+
+    private async Task LoadOptions()
+    {
+        if (string.IsNullOrEmpty(Field.RelatedEntityType)) return;
+        var relSchema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (relSchema == null) return;
+
+        var selectedIds = new HashSet<int>(_selected.Select(s => s.Id));
+        var items = await Api.GetListAsync(relSchema.ApiBasePath + "?page=1&pageSize=20");
+        _options = items?
+            .Select(el => (Id: GetId(el), Label: GetLabel(el, relSchema)))
+            .Where(o => o.Id > 0 && !selectedIds.Contains(o.Id) &&
+                (string.IsNullOrEmpty(_search) ||
+                 o.Label.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+            .ToList() ?? new();
+    }
+
+    private void OpenDropdown()
+    {
+        _open = true;
+        _ = LoadOptions();
+    }
+
+    private async Task Add(int id, string label)
+    {
+        if (_selected.All(s => s.Id != id)) _selected.Add((id, label));
+        _search = string.Empty; _open = false;
+        await Emit();
+    }
+
+    private async Task Remove(int id)
+    {
+        _selected.RemoveAll(s => s.Id == id);
+        await Emit();
+    }
+
+    private Task Emit()
+    {
+        // Emit as comma-separated string of ids — matches how EntityForm.BuildBody() reads it
+        var csv = string.Join(",", _selected.Select(s => s.Id.ToString()));
+        return ValueChanged.InvokeAsync((object?)csv);
+    }
+
+    private static int    GetId(JsonElement el) =>
+        el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+
+    private static string GetLabel(JsonElement el, EntitySchema schema)
+    {
+        foreach (var col in schema.DefaultListColumns)
+        {
+            if (el.TryGetProperty(col, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString() ?? col;
+        }
+        foreach (var key in new[] { "name", "title", "displayName" })
+        {
+            if (el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString() ?? key;
+        }
+        return el.TryGetProperty("id", out var id) ? "#" + id.GetInt32() : "?";
+    }
+}

@@ -1,0 +1,203 @@
+@page "/entity/{EntityType}/new"
+@page "/entity/{EntityType}/{Id:int}"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject SchemaService Schema
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>@_pageTitle</PageTitle>
+
+@if (_loading)
+{
+    <div class="skeleton-page">
+        <div class="skeleton-row" style="width:35%; height:2rem; margin-bottom:1.5rem;"></div>
+        @for (var i = 0; i < 4; i++) { <div class="skeleton-row" style="margin-bottom:.75rem;"></div> }
+    </div>
+}
+else if (_schema == null)
+{
+    <div class="list-empty">
+        <p>Entity type <strong>@EntityType</strong> is not registered.</p>
+    </div>
+}
+else
+{
+    <div class="page-header">
+        <div class="page-header-left">
+            <button class="back-btn" @onclick="GoBack">
+                <Icon Name="arrow-left" Size="16" /> @_schema.DisplayNamePlural
+            </button>
+        </div>
+        <h1 class="page-title">@_pageTitle</h1>
+    </div>
+
+    <div class="entity-form">
+        @foreach (var field in FormFields)
+        {
+            <div class="form-field @(field.IsRequired ? "required" : "")">
+                <label class="field-label">@field.DisplayName</label>
+                @if (!string.IsNullOrEmpty(field.Description))
+                {
+                    <span class="field-description">@field.Description</span>
+                }
+
+                @* Delegate rendering to FieldEditor — it handles all FieldTypes correctly
+                   and already exists in the project. No need to duplicate the switch here. *@
+                <FieldEditor Field="@field"
+                             Value="@GetValue(field.FieldName)"
+                             ValueChanged="@(v => SetValue(field.FieldName, v))"
+                             Disabled="@field.IsReadOnly" />
+
+                @if (HasError(field.FieldName))
+                {
+                    <span class="field-error">@GetError(field.FieldName)</span>
+                }
+            </div>
+        }
+
+        @if (_saveError != null)
+        {
+            <div class="form-error">@_saveError</div>
+        }
+
+        <div class="form-actions">
+            <button class="btn btn-ghost" @onclick="GoBack">Cancel</button>
+            <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">
+                @if (_busy) { <span class="btn-spinner"></span> }
+                @(_busy ? "Saving…" : IsNew ? "Create " + _schema.DisplayName : "Save changes")
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string EntityType { get; set; } = string.Empty;
+    [Parameter] public int?   Id         { get; set; }
+
+    private EntitySchema? _schema;
+    private bool    _loading = true;
+    private bool    _busy;
+    private bool    IsNew => !Id.HasValue;
+    private string  _pageTitle => IsNew
+        ? "New " + (_schema?.DisplayName ?? EntityType)
+        : "Edit " + (_schema?.DisplayName ?? EntityType);
+
+    private Dictionary<string, object?> _values     = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, string>  _fieldErrors = new(StringComparer.OrdinalIgnoreCase);
+    private string? _saveError;
+
+    private IEnumerable<FieldDefinition> FormFields =>
+        _schema?.Fields.Where(f => f.ShowInForm).OrderBy(f => f.SortOrder)
+        ?? Array.Empty<FieldDefinition>();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true; _saveError = null;
+        _values.Clear(); _fieldErrors.Clear();
+
+        _schema = await Schema.GetAsync(EntityType);
+
+        if (_schema != null && !IsNew && Id.HasValue)
+        {
+            var item = await Api.GetOneAsync(_schema.ApiBasePath + "/" + Id.Value);
+            if (item.HasValue) PopulateValues(item.Value);
+        }
+
+        _loading = false;
+    }
+
+    private void PopulateValues(JsonElement el)
+    {
+        foreach (var field in _schema!.Fields)
+        {
+            if (el.TryGetProperty(field.FieldName, out var val) ||
+                el.TryGetProperty(ToCamelCase(field.FieldName), out val))
+            {
+                _values[field.FieldName] = val.ValueKind == JsonValueKind.Null
+                    ? null : (object?)val.ToString();
+            }
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_schema == null) return;
+        _fieldErrors.Clear(); _saveError = null;
+
+        foreach (var field in FormFields.Where(f => f.IsRequired))
+        {
+            var v = _values.TryGetValue(field.FieldName, out var val) ? val?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(v))
+                _fieldErrors[field.FieldName] = field.DisplayName + " is required.";
+        }
+        if (_fieldErrors.Count > 0) return;
+
+        _busy = true;
+        var body = BuildBody();
+
+        if (IsNew)
+        {
+            var result = await Api.PostAsync(_schema.ApiBasePath, body);
+            _busy = false;
+            if (result == null) { _saveError = "Failed to create. Please check your input."; return; }
+            var newId = result.Value.TryGetProperty("id", out var p) ? p.GetInt32() : (int?)null;
+            Nav.NavigateTo(newId.HasValue
+                ? "/entity/" + EntityType + "/" + newId
+                : "/entity/" + EntityType);
+        }
+        else
+        {
+            var ok = await Api.PutAsync(_schema.ApiBasePath + "/" + Id!.Value, body);
+            _busy = false;
+            if (!ok) { _saveError = "Failed to save. Please check your input."; return; }
+            Nav.NavigateTo("/entity/" + EntityType + "/" + Id.Value);
+        }
+    }
+
+    private Dictionary<string, object?> BuildBody()
+    {
+        var body = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var field in FormFields)
+        {
+            if (field.IsReadOnly) continue;
+            var raw = _values.TryGetValue(field.FieldName, out var v) ? v?.ToString() : null;
+
+            body[field.FieldName] = field.Type switch
+            {
+                FieldType.Number when int.TryParse(raw, out var i)       => (object?)i,
+                FieldType.Decimal when decimal.TryParse(raw, out var d)  => d,
+                FieldType.Boolean when bool.TryParse(raw, out var b)     => b,
+                FieldType.Relation when int.TryParse(raw, out var rid)   => rid,
+                FieldType.MultiRelation => ParseIntList(raw),
+                _ => string.IsNullOrWhiteSpace(raw) ? null : raw
+            };
+        }
+        return body;
+    }
+
+    // Parse "1,2,3" into List<int> — avoids collection expression syntax not
+    // supported in all Razor compiler versions.
+    private static List<int> ParseIntList(string? raw)
+    {
+        var result = new List<int>();
+        if (string.IsNullOrWhiteSpace(raw)) return result;
+        foreach (var part in raw.Split(','))
+        {
+            if (int.TryParse(part.Trim(), out var id))
+                result.Add(id);
+        }
+        return result;
+    }
+
+    private void GoBack() => Nav.NavigateTo("/entity/" + EntityType);
+
+    private void   SetValue(string field, object? value) => _values[field] = value;
+    private object? GetValue(string field) => _values.TryGetValue(field, out var v) ? v : null;
+    private bool   HasError(string field)  => _fieldErrors.ContainsKey(field);
+    private string? GetError(string field) => _fieldErrors.TryGetValue(field, out var e) ? e : null;
+
+    private static string ToCamelCase(string s) =>
+        string.IsNullOrEmpty(s) ? s : char.ToLower(s[0]) + s[1..];
+}

@@ -1,0 +1,283 @@
+@page "/admin/actors/{Id:int}"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>@(_actorName ?? "User")</PageTitle>
+
+@if (!Permissions.Has("SuperAdmin.ManageTenants"))
+{
+    <div class="list-empty"><p>Access denied.</p></div>
+    return;
+}
+
+@if (_loading)
+{
+    <div class="skeleton-page">
+        <div class="skeleton-row" style="width:35%; height:2rem; margin-bottom:1.5rem;"></div>
+        @for (var i = 0; i < 4; i++) { <div class="skeleton-row" style="margin-bottom:.75rem;"></div> }
+    </div>
+}
+else if (_notFound)
+{
+    <div class="list-empty"><p>User not found.</p></div>
+}
+else
+{
+    <div class="page-header">
+        <div class="page-header-left">
+            <button class="back-btn" @onclick='() => Nav.NavigateTo("/admin/actors")'>
+                <Icon Name="arrow-left" Size="16" /> Users
+            </button>
+        </div>
+        <h1 class="page-title">@_actorName</h1>
+    </div>
+
+    <div class="detail-grid">
+
+        @* ── Left: profile ───────────────────────────────────────────────────── *@
+        <div class="detail-section">
+            <h2 class="section-title">Profile</h2>
+
+            <div class="form-field required">
+                <label class="field-label">Name</label>
+                <input class="field-input" @bind="_name" placeholder="Full name" />
+            </div>
+            <div class="form-field required">
+                <label class="field-label">Email</label>
+                <input class="field-input" type="email" @bind="_email" />
+            </div>
+            <div class="form-field">
+                <label class="field-label">Phone</label>
+                <input class="field-input" type="tel" @bind="_phone" />
+            </div>
+
+            @if (_profileError != null)   { <div class="form-error">@_profileError</div> }
+            @if (_profileSuccess)         { <div class="form-success"><Icon Name="check" Size="14" /> Saved.</div> }
+
+            <div class="form-actions">
+                <button class="btn btn-primary" @onclick="SaveProfile"
+                        disabled="@(_busy || string.IsNullOrWhiteSpace(_name) || string.IsNullOrWhiteSpace(_email))">
+                    @(_busy ? "Saving…" : "Save changes")
+                </button>
+            </div>
+        </div>
+
+        @* ── Right: credentials + roles ──────────────────────────────────────── *@
+        <div style="display:flex; flex-direction:column; gap:1.5rem;">
+
+            <div class="detail-section">
+                <h2 class="section-title">Password</h2>
+                <p class="section-description">
+                    Set a password directly, or generate a one-time reset link to share with the user.
+                </p>
+
+                <div class="form-field">
+                    <label class="field-label">New password</label>
+                    <input class="field-input" type="password" @bind="_newPassword"
+                           placeholder="Min. 8 characters" />
+                </div>
+
+                @if (_passwordError != null) { <div class="form-error">@_passwordError</div> }
+                @if (_passwordSuccess)       { <div class="form-success"><Icon Name="check" Size="14" /> Password updated.</div> }
+
+                <div class="form-actions">
+                    <button class="btn btn-ghost" @onclick="GenerateResetLink" disabled="@_busy">
+                        <Icon Name="share-2" Size="14" /> Generate reset link
+                    </button>
+                    <button class="btn btn-primary" @onclick="SetPassword"
+                            disabled="@(_busy || (_newPassword?.Length ?? 0) < 8)">
+                        Set password
+                    </button>
+                </div>
+
+                @if (_resetLink != null)
+                {
+                    <div class="reset-token-box" style="margin-top:.75rem;">
+                        <code class="reset-token-url">@_resetLink</code>
+                        <button class="btn btn-ghost btn-sm" @onclick="CopyResetLink">
+                            <Icon Name="paperclip" Size="13" /> Copy
+                        </button>
+                    </div>
+                    @if (_copySuccess) { <div class="form-success" style="margin-top:.5rem;">Copied to clipboard.</div> }
+                    <p class="muted-small" style="margin-top:.5rem;">Expires in 24 hours. Single use.</p>
+                }
+            </div>
+
+            <div class="detail-section">
+                <h2 class="section-title">Roles</h2>
+                <p class="muted-small">Tenant: @(_tenantName ?? _tenantId)</p>
+
+                @if (_rolesLoading)
+                {
+                    <div class="skeleton-row"></div>
+                }
+                else if (_availableRoles.Count == 0)
+                {
+                    <p class="muted">No roles defined for this tenant.</p>
+                }
+                else
+                {
+                    <div class="plugin-grid">
+                        @foreach (var role in _availableRoles)
+                        {
+                            var assigned = _assignedRoles.Contains(role);
+                            <div class="plugin-card @(assigned ? "plugin-card--enabled" : "")">
+                                <div class="plugin-card-info">
+                                    <span class="plugin-card-name">@role</span>
+                                </div>
+                                <button class="toggle @(assigned ? "toggle--on" : "")"
+                                        @onclick="() => ToggleRole(role, !assigned)"
+                                        disabled="@_busy"
+                                        title="@(assigned ? "Remove role" : "Assign role")">
+                                    <span class="toggle-knob"></span>
+                                </button>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (_roleError != null) { <div class="form-error" style="margin-top:.5rem;">@_roleError</div> }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public int Id { get; set; }
+
+    private bool    _loading  = true;
+    private bool    _notFound;
+    private bool    _busy;
+    private string? _actorName;
+    private string  _name     = string.Empty;
+    private string  _email    = string.Empty;
+    private string  _phone    = string.Empty;
+    private string  _tenantId = string.Empty;
+    private string? _tenantName;
+
+    private string? _profileError;
+    private bool    _profileSuccess;
+
+    private string  _newPassword    = string.Empty;
+    private string? _passwordError;
+    private bool    _passwordSuccess;
+    private string? _resetLink;
+    private bool    _copySuccess;
+
+    private bool         _rolesLoading = true;
+    private List<string> _availableRoles = new();
+    private HashSet<string> _assignedRoles = new(StringComparer.OrdinalIgnoreCase);
+    private string? _roleError;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true; _notFound = false;
+
+        var actor = await Api.GetOneAsync("/api/actors/" + Id);
+        if (!actor.HasValue) { _notFound = true; _loading = false; return; }
+
+        _name      = Str(actor.Value, "displayName");
+        _email     = Str(actor.Value, "email");
+        _phone     = Str(actor.Value, "phoneNumber");
+        _tenantId  = Str(actor.Value, "tenantId");
+        _actorName = _name;
+        _loading   = false;
+
+        await Task.WhenAll(LoadRolesAsync(), LoadTenantNameAsync());
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        _rolesLoading = true;
+        var rolesResult = await Api.GetListAsync("/api/rbac/roles");
+        _availableRoles = rolesResult?
+            .Select(r => Str(r, "name"))
+            .Where(n => !string.IsNullOrEmpty(n))
+            .OrderBy(n => n)
+            .ToList() ?? new();
+        _rolesLoading = false;
+    }
+
+    private async Task LoadTenantNameAsync()
+    {
+        if (string.IsNullOrEmpty(_tenantId)) return;
+        var tenants = await Api.GetListAsync("/api/admin/tenants");
+        if (tenants == null) return;
+        foreach (var t in tenants)
+        {
+            if (Str(t, "externalId").Equals(_tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                _tenantName = Str(t, "name");
+                break;
+            }
+        }
+    }
+
+    private async Task SaveProfile()
+    {
+        _busy = true; _profileError = null; _profileSuccess = false;
+
+        var ok = await Api.PutAsync("/api/actors/" + Id,
+            new { Id, DisplayName = _name.Trim(), Email = _email.Trim(), PhoneNumber = _phone.Trim() });
+
+        _busy = false;
+        if (!ok) { _profileError = "Failed to save."; return; }
+
+        _actorName = _name; _profileSuccess = true;
+        _ = Task.Delay(2500).ContinueWith(_ => { _profileSuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task SetPassword()
+    {
+        if ((_newPassword?.Length ?? 0) < 8) return;
+        _busy = true; _passwordError = null; _passwordSuccess = false;
+
+        var ok = await Api.PutAsync("/api/auth/set-password",
+            new { ActorId = Id, Password = _newPassword });
+
+        _busy = false;
+        if (!ok) { _passwordError = "Failed to set password."; return; }
+
+        _newPassword = string.Empty; _passwordSuccess = true;
+        _ = Task.Delay(2500).ContinueWith(_ => { _passwordSuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task GenerateResetLink()
+    {
+        _busy = true; _resetLink = null; _copySuccess = false;
+
+        var result = await Api.PostAsync("/api/auth/generate-reset-token", new { ActorId = Id });
+
+        _busy = false;
+        if (result == null) { _passwordError = "Failed to generate reset link."; return; }
+
+        var loginUrl = result.Value.TryGetProperty("loginUrl", out var u) ? u.GetString() : null;
+        _resetLink = loginUrl != null ? Nav.BaseUri.TrimEnd('/') + loginUrl : null;
+    }
+
+    private async Task CopyResetLink()
+    {
+        if (_resetLink == null) return;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", _resetLink);
+        _copySuccess = true;
+        _ = Task.Delay(2000).ContinueWith(_ => { _copySuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    private async Task ToggleRole(string roleName, bool assign)
+    {
+        _busy = true; _roleError = null;
+        var body     = new { ActorId = Id, TenantId = _tenantId, RoleName = roleName };
+        var endpoint = assign ? "/api/rbac/assign" : "/api/rbac/revoke";
+        var ok       = await Api.PostAsync(endpoint, body);
+        _busy = false;
+        if (!ok) { _roleError = "Failed to " + (assign ? "assign" : "remove") + " role."; return; }
+        if (assign) _assignedRoles.Add(roleName); else _assignedRoles.Remove(roleName);
+    }
+
+    private static string Str(JsonElement el, string k) =>
+        el.TryGetProperty(k, out var p) ? p.GetString() ?? "" : "";
+}

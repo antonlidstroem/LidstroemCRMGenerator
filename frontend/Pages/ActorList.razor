@@ -1,0 +1,424 @@
+@page "/admin/actors"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Services
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Users</PageTitle>
+
+@if (!Permissions.Has("SuperAdmin.ManageTenants"))
+{
+    <div class="list-empty"><p>Access denied.</p></div>
+    return;
+}
+
+<div class="page-header">
+    <h1 class="page-title">Users</h1>
+    <div class="page-header-actions">
+        <button class="btn btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="14" /> New user
+        </button>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <select class="field-input field-select" style="max-width:260px;"
+            value="@_tenantFilter"
+            @onchange="e => { _tenantFilter = e.Value?.ToString() ?? string.Empty; }">
+        <option value="">All tenants</option>
+        @foreach (var t in _tenants)
+        {
+            <option value="@TenantId(t)">@TenantName(t)</option>
+        }
+    </select>
+    <input class="field-input" style="max-width:240px;"
+           placeholder="Search name or email…"
+           value="@_search"
+           @oninput="e => { _search = e.Value?.ToString() ?? string.Empty; }" />
+</div>
+
+@if (_loading)
+{
+    <div class="skeleton-page" style="margin-top:1rem;">
+        @for (var i = 0; i < 5; i++) { <div class="skeleton-row"></div> }
+    </div>
+}
+else if (FilteredActors.Count == 0)
+{
+    <div class="list-empty" style="margin-top:2rem;">
+        <Icon Name="user" Size="36" />
+        <p>No users found.</p>
+    </div>
+}
+else
+{
+    <div class="data-table-wrapper" style="margin-top:1rem;">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>Tenant</th>
+                    <th>Has login</th>
+                    <th class="actions-col"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var actor in FilteredActors)
+                {
+                    var id = GetId(actor);
+                    var detailUrl = "/admin/actors/" + id;
+                    <tr class="data-row" @onclick="() => Nav.NavigateTo(detailUrl)">
+                        <td>@Str(actor, "displayName")</td>
+                        <td>@Str(actor, "email")</td>
+                        <td>@GetTenantName(actor)</td>
+                        <td>
+                            @if (_actorsWithCredentials.Contains(id))
+                            {
+                                <span class="badge badge-success">Yes</span>
+                            }
+                            else
+                            {
+                                <span class="badge badge-neutral">No</span>
+                            }
+                        </td>
+                        <td class="actions-cell" @onclick:stopPropagation>
+                            <div class="row-actions">
+                                <button class="btn btn-ghost btn-sm"
+                                        @onclick="() => Nav.NavigateTo(detailUrl)">
+                                    Edit
+                                </button>
+                                <button class="btn btn-ghost btn-sm"
+                                        @onclick="() => OpenSetPassword(actor)"
+                                        title="Set password">
+                                    <Icon Name="layers" Size="13" />
+                                </button>
+                                <button class="btn btn-ghost btn-sm"
+                                        @onclick="() => OpenResetToken(actor)"
+                                        title="Generate reset link">
+                                    <Icon Name="share-2" Size="13" />
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@* ── Create actor modal ────────────────────────────────────────────────────── *@
+@if (_showCreate)
+{
+    <div class="modal-backdrop" @onclick="CloseCreate">
+        <div class="modal" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">New user</h2>
+                <button class="modal-close" @onclick="CloseCreate">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-field required">
+                    <label class="field-label">Tenant</label>
+                    <select class="field-input field-select" @bind="_newTenantId">
+                        <option value="">— select tenant —</option>
+                        @foreach (var t in _tenants)
+                        {
+                            <option value="@TenantId(t)">@TenantName(t)</option>
+                        }
+                    </select>
+                </div>
+                <div class="form-field required">
+                    <label class="field-label">Name</label>
+                    <input class="field-input" @bind="_newName" placeholder="Full name" />
+                </div>
+                <div class="form-field required">
+                    <label class="field-label">Email</label>
+                    <input class="field-input" type="email" @bind="_newEmail" placeholder="user@example.com" />
+                </div>
+                <div class="form-field">
+                    <label class="field-label">Phone</label>
+                    <input class="field-input" type="tel" @bind="_newPhone" placeholder="+46 70 000 00 00" />
+                </div>
+                <div class="form-field required">
+                    <label class="field-label">Password</label>
+                    <input class="field-input" type="password" @bind="_newPassword"
+                           placeholder="Min. 8 characters" />
+                </div>
+                @if (_createError != null)
+                {
+                    <div class="form-error">@_createError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CloseCreate">Cancel</button>
+                <button class="btn btn-primary" @onclick="CreateActor"
+                        disabled="@(_busy
+                            || string.IsNullOrWhiteSpace(_newName)
+                            || string.IsNullOrWhiteSpace(_newEmail)
+                            || string.IsNullOrWhiteSpace(_newPassword)
+                            || string.IsNullOrWhiteSpace(_newTenantId))">
+                    @(_busy ? "Creating…" : "Create user")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Set password modal ────────────────────────────────────────────────────── *@
+@if (_passwordActorId.HasValue)
+{
+    <div class="modal-backdrop" @onclick="CloseSetPassword">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">Set password — @_passwordActorName</h2>
+                <button class="modal-close" @onclick="CloseSetPassword">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-field required">
+                    <label class="field-label">New password</label>
+                    <input class="field-input" type="password" @bind="_setPassword"
+                           placeholder="Min. 8 characters" />
+                </div>
+                @if (_passwordError != null) { <div class="form-error">@_passwordError</div> }
+                @if (_passwordSuccess)       { <div class="form-success">Password updated.</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CloseSetPassword">Close</button>
+                <button class="btn btn-primary" @onclick="ExecuteSetPassword"
+                        disabled="@(_busy || (_setPassword?.Length ?? 0) < 8)">
+                    @(_busy ? "Saving…" : "Set password")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Reset token modal ─────────────────────────────────────────────────────── *@
+@if (_resetTokenActorId.HasValue)
+{
+    <div class="modal-backdrop" @onclick="CloseResetToken">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">Reset link — @_resetTokenActorName</h2>
+                <button class="modal-close" @onclick="CloseResetToken">✕</button>
+            </div>
+            <div class="modal-body">
+                @if (_generatedToken == null)
+                {
+                    <p>Generate a one-time password reset link to share with the user.</p>
+                    <p>The link expires after 24 hours.</p>
+                    @if (_resetError != null) { <div class="form-error">@_resetError</div> }
+                }
+                else
+                {
+                    <p>Share this link with the user. It expires in 24 h and can only be used once.</p>
+                    <div class="reset-token-box">
+                        <code class="reset-token-url">@_generatedLoginUrl</code>
+                        <button class="btn btn-ghost btn-sm" @onclick="CopyResetLink">
+                            <Icon Name="paperclip" Size="13" /> Copy
+                        </button>
+                    </div>
+                    @if (_copySuccess) { <div class="form-success">Copied to clipboard.</div> }
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CloseResetToken">Close</button>
+                @if (_generatedToken == null)
+                {
+                    <button class="btn btn-primary" @onclick="ExecuteGenerateToken" disabled="@_busy">
+                        @(_busy ? "Generating…" : "Generate link")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<JsonElement> _actors  = new();
+    private List<JsonElement> _tenants = new();
+    private Dictionary<string, string> _tenantNames = new();
+    private HashSet<int> _actorsWithCredentials = new();
+    private bool _loading = true;
+    private bool _busy;
+    private string _search        = string.Empty;
+    private string _tenantFilter  = string.Empty;
+
+    // Create
+    private bool _showCreate;
+    private string _newName     = string.Empty;
+    private string _newEmail    = string.Empty;
+    private string _newPhone    = string.Empty;
+    private string _newPassword = string.Empty;
+    private string _newTenantId = string.Empty;
+    private string? _createError;
+
+    // Set password
+    private int?   _passwordActorId;
+    private string _passwordActorName = string.Empty;
+    private string _setPassword       = string.Empty;
+    private string? _passwordError;
+    private bool _passwordSuccess;
+
+    // Reset token
+    private int?   _resetTokenActorId;
+    private string _resetTokenActorName = string.Empty;
+    private string? _generatedToken;
+    private string? _generatedLoginUrl;
+    private string? _resetError;
+    private bool _copySuccess;
+
+    private List<JsonElement> FilteredActors => _actors
+        .Where(a =>
+            (string.IsNullOrEmpty(_tenantFilter) ||
+             Str(a, "tenantId") == _tenantFilter) &&
+            (string.IsNullOrEmpty(_search) ||
+             Str(a, "displayName").Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+             Str(a, "email").Contains(_search, StringComparison.OrdinalIgnoreCase)))
+        .ToList();
+
+    protected override async Task OnInitializedAsync() => await LoadAllAsync();
+
+    private async Task LoadAllAsync()
+    {
+        _loading = true;
+        var actorsTask  = Api.GetListAsync("/api/actors?page=1&pageSize=500");
+        var tenantsTask = Api.GetListAsync("/api/admin/tenants");
+        await Task.WhenAll(actorsTask, tenantsTask);
+        _actors  = actorsTask.Result  ?? new();
+        _tenants = tenantsTask.Result ?? new();
+        _tenantNames = _tenants.ToDictionary(TenantId, TenantName);
+        _loading = false;
+    }
+
+    private string GetTenantName(JsonElement actor)
+    {
+        var tid = Str(actor, "tenantId");
+        return _tenantNames.TryGetValue(tid, out var n) ? n : "—";
+    }
+
+    // ── Create ────────────────────────────────────────────────────────────────
+
+    private void OpenCreate()
+    {
+        _newName = _newEmail = _newPhone = _newPassword = string.Empty;
+        _newTenantId = _tenantFilter;
+        _createError = null;
+        _showCreate  = true;
+    }
+
+    private void CloseCreate() => _showCreate = false;
+
+    private async Task CreateActor()
+    {
+        if (string.IsNullOrWhiteSpace(_newName)     ||
+            string.IsNullOrWhiteSpace(_newEmail)    ||
+            string.IsNullOrWhiteSpace(_newPassword) ||
+            string.IsNullOrWhiteSpace(_newTenantId)) return;
+
+        _busy = true; _createError = null;
+
+        var created = await Api.PostAsync("/api/actors",
+            new { DisplayName = _newName.Trim(), Email = _newEmail.Trim(), PhoneNumber = _newPhone.Trim() });
+
+        if (created == null)
+        {
+            _createError = "Failed to create user. The email may already be in use.";
+            _busy = false; return;
+        }
+
+        var actorId = created.Value.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+        if (actorId == 0) { _createError = "User created but ID could not be read."; _busy = false; return; }
+
+        var pwOk = await Api.PutAsync("/api/auth/set-password",
+            new { ActorId = actorId, Password = _newPassword });
+
+        _busy = false;
+
+        if (!pwOk)
+        {
+            _createError = "User created but password could not be set. Use the set-password button to retry.";
+            return;
+        }
+
+        _actorsWithCredentials.Add(actorId);
+        _showCreate = false;
+        await LoadAllAsync();
+    }
+
+    // ── Set password ──────────────────────────────────────────────────────────
+
+    private void OpenSetPassword(JsonElement actor)
+    {
+        _passwordActorId   = GetId(actor);
+        _passwordActorName = Str(actor, "displayName");
+        _setPassword       = string.Empty;
+        _passwordError     = null;
+        _passwordSuccess   = false;
+    }
+
+    private void CloseSetPassword() => _passwordActorId = null;
+
+    private async Task ExecuteSetPassword()
+    {
+        if (!_passwordActorId.HasValue || (_setPassword?.Length ?? 0) < 8) return;
+        _busy = true; _passwordError = null;
+
+        var ok = await Api.PutAsync("/api/auth/set-password",
+            new { ActorId = _passwordActorId.Value, Password = _setPassword });
+
+        _busy = false;
+        if (!ok) { _passwordError = "Failed to set password."; return; }
+
+        _passwordSuccess = true;
+        _actorsWithCredentials.Add(_passwordActorId.Value);
+        _ = Task.Delay(2000).ContinueWith(_ => { _passwordSuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    // ── Reset token ───────────────────────────────────────────────────────────
+
+    private void OpenResetToken(JsonElement actor)
+    {
+        _resetTokenActorId   = GetId(actor);
+        _resetTokenActorName = Str(actor, "displayName");
+        _generatedToken      = null;
+        _generatedLoginUrl   = null;
+        _resetError          = null;
+        _copySuccess         = false;
+    }
+
+    private void CloseResetToken() => _resetTokenActorId = null;
+
+    private async Task ExecuteGenerateToken()
+    {
+        if (!_resetTokenActorId.HasValue) return;
+        _busy = true; _resetError = null;
+
+        var result = await Api.PostAsync("/api/auth/generate-reset-token",
+            new { ActorId = _resetTokenActorId.Value });
+
+        _busy = false;
+        if (result == null) { _resetError = "Failed to generate reset token."; return; }
+
+        _generatedToken    = result.Value.TryGetProperty("token",    out var t) ? t.GetString() : null;
+        var loginUrl       = result.Value.TryGetProperty("loginUrl", out var u) ? u.GetString() : null;
+        _generatedLoginUrl = loginUrl != null ? Nav.BaseUri.TrimEnd('/') + loginUrl : null;
+    }
+
+    private async Task CopyResetLink()
+    {
+        if (_generatedLoginUrl == null) return;
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", _generatedLoginUrl);
+        _copySuccess = true;
+        _ = Task.Delay(2000).ContinueWith(_ => { _copySuccess = false; InvokeAsync(StateHasChanged); });
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static int    GetId(JsonElement el)         => el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+    private static string Str(JsonElement el, string k) => el.TryGetProperty(k,    out var p) ? p.GetString() ?? "" : "";
+    private static string TenantId(JsonElement t)       => Str(t, "externalId");
+    private static string TenantName(JsonElement t)     => Str(t, "name");
+}

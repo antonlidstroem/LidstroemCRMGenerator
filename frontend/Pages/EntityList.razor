@@ -1,0 +1,298 @@
+@page "/entity/{EntityType}"
+@using System.Text.Json
+@using Lidstroem.Frontend.Core.Models
+@using Lidstroem.Frontend.Core.Services
+@inject SchemaService Schema
+@inject ApiClient Api
+@inject PermissionService Permissions
+@inject NavigationManager Nav
+
+<PageTitle>@(_schema?.DisplayNamePlural ?? EntityType)</PageTitle>
+
+@if (_loading)
+{
+    <div class="skeleton-page">
+        <div class="skeleton-row" style="width:40%; height:2rem; margin-bottom:1.5rem;"></div>
+        @for (var i = 0; i < 6; i++)
+        {
+            <div class="skeleton-row"></div>
+        }
+    </div>
+}
+else if (_schema == null)
+{
+    <div class="list-empty">
+        <p>Entity type <strong>@EntityType</strong> is not registered.</p>
+    </div>
+}
+else
+{
+    <div class="page-header">
+        <h1 class="page-title">@_schema.DisplayNamePlural</h1>
+        <div class="page-header-actions">
+            @foreach (var action in ToolbarActions)
+            {
+                <button class="btn btn-ghost btn-sm" @onclick="() => RunAction(action)">
+                    @if (action.Icon != null) { <Icon Name="@action.Icon" Size="14" /> }
+                    @action.DisplayName
+                </button>
+            }
+            <button class="btn btn-primary" @onclick="OpenCreate">
+                <Icon Name="plus" Size="14" />
+                New @_schema.DisplayName
+            </button>
+        </div>
+    </div>
+
+    @if (_error != null)
+    {
+        <div class="form-error" style="margin-bottom:1rem;">@_error</div>
+    }
+
+    @if (_items.Count == 0)
+    {
+        <div class="list-empty">
+            <Icon Name="inbox" Size="40" />
+            <p>No @_schema.DisplayNamePlural.ToLower() yet.</p>
+            <button class="btn btn-primary" @onclick="OpenCreate">
+                Create the first @_schema.DisplayName.ToLower()
+            </button>
+        </div>
+    }
+    else
+    {
+        <div class="data-table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        @foreach (var col in _columns)
+                        {
+                            <th>@col.DisplayName</th>
+                        }
+                        <th class="actions-col"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _items)
+                    {
+                        var id = GetId(item);
+                        <tr class="data-row" @onclick="() => NavigateToDetail(id)">
+                            @foreach (var col in _columns)
+                            {
+                                <td>@FormatCell(item, col)</td>
+                            }
+                            <td class="actions-cell" @onclick:stopPropagation>
+                                <div class="row-actions">
+                                    @foreach (var action in RowActions)
+                                    {
+                                        <button class="btn btn-ghost btn-sm"
+                                                @onclick="() => RunAction(action, id)"
+                                                title="@action.DisplayName">
+                                            @if (action.Icon != null)
+                                            {
+                                                <Icon Name="@action.Icon" Size="13" />
+                                            }
+                                            else
+                                            {
+                                                @action.DisplayName
+                                            }
+                                        </button>
+                                    }
+                                    <button class="btn btn-ghost btn-sm"
+                                            @onclick="() => NavigateToDetail(id)">
+                                        Edit
+                                    </button>
+                                    <button class="btn btn-ghost btn-sm"
+                                            @onclick="() => ConfirmDelete(id)"
+                                            title="Delete">
+                                        <Icon Name="trash" Size="13" />
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+@* ── Delete confirmation modal ─────────────────────────────────────────────── *@
+@if (_deleteId.HasValue)
+{
+    <div class="modal-backdrop" @onclick="CancelDelete">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">Delete @(_schema?.DisplayName ?? "item")?</h2>
+            </div>
+            <div class="modal-body">
+                <p>This action cannot be undone.</p>
+                @if (_deleteError != null)
+                {
+                    <div class="form-error" style="margin-top:.75rem;">@_deleteError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CancelDelete">Cancel</button>
+                <button class="btn btn-danger" @onclick="ExecuteDelete" disabled="@_busy">
+                    @(_busy ? "Deleting…" : "Delete")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string EntityType { get; set; } = string.Empty;
+
+    private EntitySchema? _schema;
+    private List<JsonElement> _items = new();
+    private List<FieldDefinition> _columns = new();
+    private bool _loading = true;
+    private bool _busy;
+    private string? _error;
+    private int? _deleteId;
+    private string? _deleteError;
+
+    private IEnumerable<ActionDefinition> ToolbarActions =>
+        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Toolbar) ?? [];
+    private IEnumerable<ActionDefinition> RowActions =>
+        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Row) ?? [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _items.Clear();
+        _columns.Clear();
+
+        _schema = await Schema.GetAsync(EntityType);
+        if (_schema != null)
+        {
+            // Resolve which columns to show — DefaultListColumns first, then all ShowInList fields.
+            var fieldMap = _schema.Fields.ToDictionary(f => f.FieldName, StringComparer.OrdinalIgnoreCase);
+            _columns = _schema.DefaultListColumns
+                .Where(c => fieldMap.ContainsKey(c))
+                .Select(c => fieldMap[c])
+                .ToList();
+
+            if (_columns.Count == 0)
+                _columns = _schema.Fields.Where(f => f.ShowInList).OrderBy(f => f.SortOrder).ToList();
+
+            await LoadItemsAsync();
+        }
+
+        _loading = false;
+    }
+
+    private async Task LoadItemsAsync()
+    {
+        if (_schema == null) return;
+        var result = await Api.GetListAsync($"{_schema.ApiBasePath}?page=1&pageSize=100");
+        _items = result ?? new();
+    }
+
+    private void OpenCreate() => Nav.NavigateTo($"/entity/{EntityType}/new");
+    private void NavigateToDetail(int id) => Nav.NavigateTo($"/entity/{EntityType}/{id}");
+
+    private void ConfirmDelete(int id)
+    {
+        _deleteId = id;
+        _deleteError = null;
+    }
+
+    private void CancelDelete()
+    {
+        _deleteId = null;
+        _deleteError = null;
+    }
+
+    private async Task ExecuteDelete()
+    {
+        if (_schema == null || !_deleteId.HasValue) return;
+        _busy = true;
+        _deleteError = null;
+
+        var ok = await Api.DeleteAsync($"{_schema.ApiBasePath}/{_deleteId.Value}");
+        _busy = false;
+
+        if (!ok)
+        {
+            _deleteError = "Could not delete. The item may be referenced elsewhere.";
+            return;
+        }
+
+        _deleteId = null;
+        await LoadItemsAsync();
+    }
+
+    private async Task RunAction(ActionDefinition action, int? id = null)
+    {
+        if (_schema == null) return;
+        var url = action.UrlTemplate
+            .Replace("{id}", id?.ToString() ?? "")
+            .Replace("{entityType}", EntityType);
+
+        if (action.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo(url);
+            return;
+        }
+
+        _busy = true;
+        if (action.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            await Api.PostAsync(url, new { });
+        else if (action.HttpMethod.Equals("PUT", StringComparison.OrdinalIgnoreCase))
+            await Api.PutAsync(url, new { });
+        else if (action.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
+            await Api.DeleteAsync(url);
+
+        _busy = false;
+        await LoadItemsAsync();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static int GetId(JsonElement el) =>
+        el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+
+    private static string FormatCell(JsonElement item, FieldDefinition col)
+    {
+        if (!item.TryGetProperty(col.FieldName, out var val) &&
+            !item.TryGetProperty(ToCamelCase(col.FieldName), out val))
+            return "—";
+
+        return val.ValueKind switch
+        {
+            JsonValueKind.Null      => "—",
+            JsonValueKind.True      => "Yes",
+            JsonValueKind.False     => "No",
+            JsonValueKind.String    => FormatStringValue(val.GetString() ?? "", col),
+            JsonValueKind.Number    => val.TryGetDecimal(out var d) ? d.ToString("G") : val.GetRawText(),
+            _                       => val.GetRawText()
+        };
+    }
+
+    private static string FormatStringValue(string raw, FieldDefinition col)
+    {
+        if (string.IsNullOrEmpty(raw)) return "—";
+
+        if (col.Type is FieldType.Date && DateTime.TryParse(raw, out var d))
+            return d.ToString("d MMM yyyy");
+
+        if (col.Type is FieldType.DateTime && DateTime.TryParse(raw, out var dt))
+            return dt.ToString("d MMM yyyy HH:mm");
+
+        if (col.EnumOptions != null)
+        {
+            var opt = col.EnumOptions.FirstOrDefault(o =>
+                string.Equals(o.Value, raw, StringComparison.OrdinalIgnoreCase));
+            if (opt != null) return opt.DisplayName;
+        }
+
+        return raw.Length > 80 ? raw[..77] + "…" : raw;
+    }
+
+    private static string ToCamelCase(string s) =>
+        string.IsNullOrEmpty(s) ? s : char.ToLower(s[0]) + s[1..];
+}
