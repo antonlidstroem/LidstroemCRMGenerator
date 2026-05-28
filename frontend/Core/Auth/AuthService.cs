@@ -12,6 +12,14 @@ public class AuthService
     private readonly IJSRuntime _js;
     private readonly RealtimeService _realtime;
 
+    // ASP.NET Core serializes JSON with camelCase by default (accessToken, refreshToken, expiresAt).
+    // ReadFromJsonAsync without options is case-sensitive and would fail to map camelCase keys
+    // to PascalCase C# properties, leaving AccessToken = null → IsAuthenticated = false → 401.
+    private static readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     private string? _accessToken;
     private string? _refreshToken;
     private DateTime _expiresAt;
@@ -39,11 +47,23 @@ public class AuthService
 
     public async Task InitializeAsync()
     {
-        _refreshToken = await _js.InvokeAsync<string?>("sessionStorage.getItem", "lid_rt");
-        var expStr    = await _js.InvokeAsync<string?>("sessionStorage.getItem", "lid_exp");
+        try
+        {
+            // Use localStorage (persists across tabs/restarts) rather than sessionStorage.
+            // Edge's Tracking Prevention can block sessionStorage for iframes/third-party
+            // contexts and throws JSException rather than returning null, which would
+            // silently abort InitializeAsync and leave _accessToken = null → 401 on boot.
+            _refreshToken = await _js.InvokeAsync<string?>("localStorage.getItem", "lid_rt");
+            var expStr    = await _js.InvokeAsync<string?>("localStorage.getItem", "lid_exp");
 
-        if (DateTime.TryParse(expStr, out var exp))
-            _expiresAt = exp;
+            if (DateTime.TryParse(expStr, out var exp))
+                _expiresAt = exp;
+        }
+        catch
+        {
+            // Storage blocked (private browsing, Tracking Prevention, iframe sandbox).
+            // Fall through — user will need to log in manually.
+        }
 
         if (!string.IsNullOrEmpty(_refreshToken))
             await TryRefreshAsync();
@@ -67,7 +87,7 @@ public class AuthService
 
         if (!response.IsSuccessStatusCode) return false;
 
-        var tokens = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var tokens = await response.Content.ReadFromJsonAsync<TokenResponse>(_jsonOptions);
         if (tokens == null) return false;
 
         await StoreTokensAsync(tokens);
@@ -125,7 +145,7 @@ public class AuthService
 
         if (!response.IsSuccessStatusCode) return false;
 
-        var tokens = await response.Content.ReadFromJsonAsync<TokenResponse>();
+        var tokens = await response.Content.ReadFromJsonAsync<TokenResponse>(_jsonOptions);
         if (tokens == null) return false;
 
         await StoreTokensAsync(tokens);
@@ -141,8 +161,8 @@ public class AuthService
         _refreshToken = tokens.RefreshToken;
         _expiresAt    = tokens.ExpiresAt;
 
-        await _js.InvokeVoidAsync("sessionStorage.setItem", "lid_rt",  _refreshToken);
-        await _js.InvokeVoidAsync("sessionStorage.setItem", "lid_exp", _expiresAt.ToString("O"));
+        await _js.InvokeVoidAsync("localStorage.setItem", "lid_rt",  _refreshToken);
+        await _js.InvokeVoidAsync("localStorage.setItem", "lid_exp", _expiresAt.ToString("O"));
     }
 
     private async Task ClearTokensAsync()
@@ -151,8 +171,8 @@ public class AuthService
         _refreshToken = null;
         _expiresAt    = default;
 
-        await _js.InvokeVoidAsync("sessionStorage.removeItem", "lid_rt");
-        await _js.InvokeVoidAsync("sessionStorage.removeItem", "lid_exp");
+        await _js.InvokeVoidAsync("localStorage.removeItem", "lid_rt");
+        await _js.InvokeVoidAsync("localStorage.removeItem", "lid_exp");
     }
 
     private void ParseClaims()
