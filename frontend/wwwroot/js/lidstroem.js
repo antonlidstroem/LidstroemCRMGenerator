@@ -123,4 +123,60 @@ window.lidstroem = {
     const el = document.querySelector(selector);
     if (el) el.focus();
   },
+
+  /**
+   * Registers a document-level click listener that calls Close() on the given
+   * Blazor component reference when the user clicks outside the element with
+   * the given id. Used by RelationPicker and MultiRelationPicker to close their
+   * dropdowns on outside click.
+   *
+   * @param {string}              elementId  - id of the container element
+   * @param {DotNetObjectReference} dotNetRef - Blazor component with a [JSInvokable] Close() method
+   */
+  registerClickOutside(elementId, dotNetRef) {
+    const handler = (e) => {
+      const el = document.getElementById(elementId);
+      if (el && !el.contains(e.target)) {
+        dotNetRef.invokeMethodAsync('Close');
+      }
+    };
+    // Store handler so we can remove it later
+    window._clickOutsideHandlers = window._clickOutsideHandlers || {};
+    window._clickOutsideHandlers[elementId] = handler;
+    document.addEventListener('click', handler, true);
+  },
+
+  /**
+   * Removes the click-outside listener previously registered for the given element id.
+   */
+  unregisterClickOutside(elementId) {
+    const handlers = window._clickOutsideHandlers;
+    if (handlers && handlers[elementId]) {
+      document.removeEventListener('click', handlers[elementId], true);
+      delete handlers[elementId];
+    }
+  },
+
+  /**
+   * BUG-29 FIX: Triggers a client-side file download from a byte array.
+   * Used by ReportService.DownloadCsvAsync to download authenticated content
+   * without a bare <a href> (which carries no Authorization header).
+   *
+   * @param {Uint8Array} bytes     - Raw file bytes from ApiClient.GetBytesAsync
+   * @param {string}     fileName  - Suggested filename for the download dialog
+   * @param {string}     mimeType  - MIME type (e.g. "text/csv", "application/pdf")
+   */
+  downloadBytes(bytes, fileName, mimeType) {
+    const blob = new Blob([new Uint8Array(bytes)], { type: mimeType });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke after a short delay to allow the download to start
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  },
+
 };

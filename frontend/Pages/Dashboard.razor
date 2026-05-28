@@ -5,57 +5,103 @@
 @using Lidstroem.Frontend.Core.Services
 @inject SchemaService Schema
 @inject ApiClient Api
+@inject PermissionService Permissions
 @inject NavigationManager Nav
 
 <PageTitle>Dashboard</PageTitle>
 
-<div class="dashboard-page">
-    <div class="page-header">
-        <h1 class="page-title">Dashboard</h1>
-    </div>
+@code {
+    protected override void OnInitialized()
+    {
+        // SuperAdmin has no entity data of their own — redirect straight to
+        // tenant management which is their primary task.
+        if (Permissions.Has("SuperAdmin.ManageTenants"))
+            Nav.NavigateTo("/admin/tenants", replace: true);
+    }
+}
 
-    <div class="dashboard-grid">
-        @foreach (var card in _cards)
+@if (!Permissions.Has("SuperAdmin.ManageTenants"))
+{
+    <div class="dashboard-page">
+        <div class="page-header">
+            <h1 class="page-title">Dashboard</h1>
+        </div>
+
+        @if (_loading)
         {
-            <a href="/entity/@card.EntityType" class="dashboard-card">
-                <div class="dashboard-card-icon">
-                    <Icon Name="@(card.Icon ?? "layers")" Size="24" />
-                </div>
-                <div class="dashboard-card-content">
-                    <span class="dashboard-card-count">
-                        @(card.Count == null ? "—" : card.CountIsApproximate ? $"{card.Count}+" : card.Count.ToString()!)
-                    </span>
-                    <span class="dashboard-card-label">@card.DisplayNamePlural</span>
-                </div>
-            </a>
+            <div class="dashboard-grid">
+                @for (var i = 0; i < 4; i++)
+                {
+                    <div class="dashboard-card dashboard-card--skeleton">
+                        <div class="skeleton-row" style="width:40px;height:40px;border-radius:50%;margin-bottom:.75rem;"></div>
+                        <div class="skeleton-row" style="width:60%;height:1.5rem;margin-bottom:.25rem;"></div>
+                        <div class="skeleton-row" style="width:40%;"></div>
+                    </div>
+                }
+            </div>
+        }
+        else if (_cards.Count == 0)
+        {
+            <div class="list-empty">
+                <Icon Name="layers" Size="40" />
+                <p>No data modules are active for your organisation.</p>
+            </div>
+        }
+        else
+        {
+            <div class="dashboard-grid">
+                @foreach (var card in _cards)
+                {
+                    var href = "/entity/" + card.EntityType;
+                    <a href="@href" class="dashboard-card">
+                        <div class="dashboard-card-icon">
+                            <Icon Name="@(card.Icon ?? "layers")" Size="24" />
+                        </div>
+                        <div class="dashboard-card-content">
+                            <span class="dashboard-card-count">
+                                @if (card.Count == null)
+                                {
+                                    <span class="dashboard-card-count--loading"></span>
+                                }
+                                else
+                                {
+                                    @(card.CountIsApproximate ? card.Count + "+" : card.Count.ToString()!)
+                                }
+                            </span>
+                            <span class="dashboard-card-label">@card.DisplayNamePlural</span>
+                        </div>
+                    </a>
+                }
+            </div>
         }
     </div>
-</div>
+}
 
 @code {
     private List<DashboardCard> _cards = new();
+    private bool _loading = true;
 
     protected override async Task OnInitializedAsync()
     {
+        if (Permissions.Has("SuperAdmin.ManageTenants")) return;
+
         var schemas = await Schema.GetAllAsync();
         _cards = schemas.Values
+            .Where(s => s.ShowOnDashboard)
             .OrderBy(s => s.NavOrder)
-            // BUG FIX #5: Was constructing the path as "/api/{EntityType.ToLower()}s" which
-            // produces wrong URLs for irregular plurals (e.g. "activitys", "fieldreports"
-            // becomes "fieldreportss"). Use ApiBasePath from the schema directly.
-            .Select(s => new DashboardCard(s.EntityType, s.DisplayNamePlural, s.Icon, s.ApiBasePath, null, false))
+            .Select(s => new DashboardCard(
+                s.EntityType, s.DisplayNamePlural, s.Icon, s.ApiBasePath, null, false))
             .ToList();
 
-        // Fix 3: Load counts in parallel. We request pageSize=200 (the backend cap).
-        // If exactly 200 are returned the tenant may have more — shown as "200+".
-        // A dedicated /api/{entity}/count endpoint would be cleaner but requires
-        // backend changes; this is an acceptable client-side approximation.
+        _loading = false;
+
+        // Load counts in parallel — each card updates independently as counts arrive.
         var tasks = _cards.Select(async (card, i) =>
         {
-            var items = await Api.GetListAsync($"{card.ApiPath}?page=1&pageSize=200");
-            var count = items?.Count;
+            var items = await Api.GetListAsync(card.ApiPath + "?page=1&pageSize=200");
+            var count = items?.Count ?? 0;
             _cards[i] = card with { Count = count, CountIsApproximate = count == 200 };
-            StateHasChanged();
+            await InvokeAsync(StateHasChanged);
         });
 
         await Task.WhenAll(tasks);

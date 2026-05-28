@@ -75,6 +75,7 @@ public static class InfrastructureExtensions
         services.AddScoped<IAuthProvider, JwtAuthProvider>();
         services.AddScoped<ITenantContext, JwtTenantContext>();
         services.AddScoped<ICurrentUserContext, JwtCurrentUserContext>();
+        services.AddScoped<IAuthContext, JwtAuthContext>();
 
         // ── RBAC ──────────────────────────────────────────────────────────────
         services.AddMemoryCache();

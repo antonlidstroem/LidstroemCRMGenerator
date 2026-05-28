@@ -33,10 +33,29 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("FrontendPolicy", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()
-              .AllowCredentials(); // Required for SignalR WebSocket handshake
+        if (builder.Environment.IsDevelopment())
+        {
+            // Blazor WASM dev server picks a random port on each run.
+            // Allow any localhost/127.0.0.1 origin in development so CORS
+            // never blocks requests regardless of which port is assigned.
+            policy.SetIsOriginAllowed(origin =>
+                {
+                    var uri = new Uri(origin);
+                    return uri.Host is "localhost" or "127.0.0.1";
+                })
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials()
+                  .WithExposedHeaders("X-Total-Count");
+        }
+        else
+        {
+            policy.WithOrigins(allowedOrigins)
+                  .AllowAnyHeader()
+                  .AllowAnyMethod()
+                  .AllowCredentials()
+                  .WithExposedHeaders("X-Total-Count");
+        }
     });
 });
 
@@ -120,6 +139,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseSuperAdmin();
 app.MapControllers();
+app.MapLidstroemHubs();
 app.Run();
 
 public partial class Program { }

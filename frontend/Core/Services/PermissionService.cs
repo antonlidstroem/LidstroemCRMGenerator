@@ -5,22 +5,22 @@ namespace Lidstroem.Frontend.Core.Services;
 
 public class PermissionService
 {
-    // Fix 11: Replaced raw HttpClient with ApiClient so requests include the
-    // Authorization: Bearer header. Without this, the permissions endpoint
-    // returns 401 and the HashSet stays null — Has() always returns false,
-    // silently hiding all permission-gated UI elements for every user.
-    private readonly ApiClient _api;
+    private readonly ApiClient  _api;
     private readonly AuthService _auth;
     private HashSet<string>? _permissions;
 
-    // The SuperAdmin actor lives in the system tenant (all-zeros GUID + 1).
-    // When tenant_id is absent from the JWT (superadmin has no normal tenant),
-    // we fall back to this sentinel so the permissions query still fires.
-    private static readonly Guid SystemTenantId = new("00000000-0000-0000-0000-000000000001");
+    private static readonly Guid SystemTenantId =
+        new("00000000-0000-0000-0000-000000000001");
+
+    // BUG-31 FIX: Expose a PermissionsLoaded event and IsLoaded flag so that
+    // callers (Login.razor) can await the completion of LoadAsync without using
+    // a magic Task.Delay constant that fails on slow backends.
+    public event Action? PermissionsLoaded;
+    public bool IsLoaded => _permissions != null;
 
     public PermissionService(ApiClient api, AuthService auth)
     {
-        _api = api;
+        _api  = api;
         _auth = auth;
     }
 
@@ -28,19 +28,8 @@ public class PermissionService
     {
         if (_auth.ActorId == null) return;
 
-        // FIX: SuperAdmin actors are seeded with TenantId = SystemTenantId but
-        // their JWT may carry no tenant_id claim (or an empty one), causing
-        // _auth.TenantId to be null.  In that case fall back to SystemTenantId
-        // so the permissions query always fires — previously the early-return
-        // here left _permissions null, making Has() always return false and
-        // hiding all permission-gated UI (including the Tenants admin link)
-        // for every superadmin login.
         var tenantId = _auth.TenantId ?? SystemTenantId;
 
-        // Use /my-permissions — a self-serve endpoint any authenticated user can call.
-        // The previous endpoint (/actor/{id}/permissions) requires SuperAdmin.ManageTenants,
-        // so non-admin users received 403 and _permissions stayed null, making Has() always
-        // return false and hiding all permission-gated UI.
         var response = await _api.GetListAsync(
             $"/api/rbac/my-permissions?tenantId={tenantId}");
 
@@ -50,6 +39,9 @@ public class PermissionService
                         .Where(s => !string.IsNullOrEmpty(s)),
                 StringComparer.OrdinalIgnoreCase)
             : new HashSet<string>();
+
+        // Notify subscribers (e.g. Login.razor waiting for permission check)
+        PermissionsLoaded?.Invoke();
     }
 
     public bool Has(string permission)
@@ -58,5 +50,10 @@ public class PermissionService
         return _permissions?.Contains(permission) ?? false;
     }
 
-    public void Clear() => _permissions = null;
+    public void Clear()
+    {
+        _permissions = null;
+        // Reset IsLoaded so Login.razor doesn't see stale state after logout
+        PermissionsLoaded = null;
+    }
 }

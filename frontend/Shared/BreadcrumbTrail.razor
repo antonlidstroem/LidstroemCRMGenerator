@@ -1,3 +1,4 @@
+@implements IDisposable
 @inject NavigationManager Nav
 @inject Lidstroem.Frontend.Core.Services.SchemaService Schema
 
@@ -21,27 +22,66 @@
 @code {
     private List<(string Label, string? Href)> _crumbs = new();
 
-    protected override async Task OnParametersSetAsync()
+    protected override async Task OnInitializedAsync()
+    {
+        // BUG-28 FIX: BreadcrumbTrail only rebuilt crumbs in OnParametersSetAsync,
+        // which doesn't fire on navigation within the same layout. Subscribing to
+        // LocationChanged ensures the breadcrumb always reflects the current URL.
+        Nav.LocationChanged += OnLocationChanged;
+        await BuildCrumbsAsync(Nav.Uri);
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+
+    private async void OnLocationChanged(object? sender,
+        Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        await BuildCrumbsAsync(e.Location);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnParametersSetAsync() =>
+        await BuildCrumbsAsync(Nav.Uri);
+
+    private async Task BuildCrumbsAsync(string url)
     {
         _crumbs.Clear();
-        var uri = new Uri(Nav.Uri);
-        var segments = uri.AbsolutePath.Trim('/').Split('/');
+        var segments = new Uri(url).AbsolutePath.Trim('/').Split('/');
 
         // /entity/{EntityType}/{id?}
-        if (segments.Length >= 2 && segments[0] == "entity")
+        if (segments.Length >= 2 &&
+            segments[0].Equals("entity", StringComparison.OrdinalIgnoreCase))
         {
             var entityType = segments[1];
-            var schema = await Schema.GetAsync(entityType);
+            var schema     = await Schema.GetAsync(entityType);
             var pluralName = schema?.DisplayNamePlural ?? entityType;
-            var singleName = schema?.DisplayName ?? entityType;
+            var singleName = schema?.DisplayName       ?? entityType;
 
-            _crumbs.Add((pluralName, $"/entity/{entityType}"));
+            _crumbs.Add((pluralName, "/entity/" + entityType));
 
             if (segments.Length >= 3)
             {
                 var id = segments[2];
-                _crumbs.Add((id == "new" ? $"New {singleName}" : $"#{id}", null));
+                _crumbs.Add((id == "new" ? "New " + singleName : "#" + id, null));
             }
+        }
+        // /admin/tenants/{id?}
+        else if (segments.Length >= 2 &&
+                 segments[0].Equals("admin", StringComparison.OrdinalIgnoreCase) &&
+                 segments[1].Equals("tenants", StringComparison.OrdinalIgnoreCase))
+        {
+            _crumbs.Add(("Organisations", "/admin/tenants"));
+            if (segments.Length >= 3)
+                _crumbs.Add(("#" + segments[2], null));
+        }
+        // /admin/actors/{id?}
+        else if (segments.Length >= 2 &&
+                 segments[0].Equals("admin", StringComparison.OrdinalIgnoreCase) &&
+                 segments[1].Equals("actors", StringComparison.OrdinalIgnoreCase))
+        {
+            _crumbs.Add(("Users", "/admin/actors"));
+            if (segments.Length >= 3)
+                _crumbs.Add(("#" + segments[2], null));
         }
     }
 }

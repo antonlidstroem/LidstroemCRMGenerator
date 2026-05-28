@@ -38,9 +38,39 @@ public class SystemSeedService : IHostedService
         var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var hasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
 
+        await SeedSystemTenantAsync(context, cancellationToken);
         await SeedDevTenantAsync(context, cancellationToken);
         await SeedAnonymousActorAsync(context, cancellationToken);
         await SeedSuperAdminAsync(context, hasher, cancellationToken);
+    }
+
+    /// <summary>
+    /// POINT 6 FIX: The system tenant row (ExternalId = SystemTenantId) was never
+    /// seeded. All SuperAdmin entities (actors, roles, assignments) have their
+    /// TenantId FK pointing at SystemTenantId, but SchemaController.GetEnabledPluginKeysAsync
+    /// resolves the JWT tenantId claim (Guid = Tenant.ExternalId) to a Tenant.Id (int)
+    /// via a DB lookup. Without this row the lookup returns null and SuperAdmin sees
+    /// zero schemas — the dashboard and nav are completely empty after login.
+    /// </summary>
+    private async Task SeedSystemTenantAsync(AppDbContext context, CancellationToken ct)
+    {
+        var exists = await context.Set<Tenant>().IgnoreQueryFilters()
+            .AnyAsync(t => t.ExternalId == TenantConstants.SystemTenantId, ct);
+
+        if (exists) return;
+
+        context.Set<Tenant>().Add(new Tenant
+        {
+            ExternalId  = TenantConstants.SystemTenantId,
+            Name        = "System",
+            IsActive    = true,
+            ActivatedAt = DateTime.UtcNow,
+            // The system tenant itself lives in the system tenant scope
+            TenantId    = TenantConstants.SystemTenantId
+        });
+
+        await context.SaveChangesAsync(ct);
+        _logger.LogInformation("[Seed] System tenant created");
     }
 
     private async Task SeedDevTenantAsync(AppDbContext context, CancellationToken ct)

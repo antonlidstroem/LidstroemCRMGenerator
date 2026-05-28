@@ -1,10 +1,12 @@
 @using System.Text.Json
 @using Lidstroem.Frontend.Core.Models
 @using Lidstroem.Frontend.Core.Services
+@implements IDisposable
 @inject ApiClient Api
 @inject SchemaService Schema
+@inject IJSRuntime JS
 
-<div class="multi-relation-picker">
+<div class="multi-relation-picker" id="@_pickerId">
     <!-- Selected tags -->
     <div class="selected-tags">
         @foreach (var tag in _selectedTags)
@@ -50,6 +52,33 @@
     private List<RelationOption> _options = new();
     private string _query = string.Empty;
     private bool _open;
+
+    // BUG-11 FIX: Missing click-outside handling — dropdown stayed open indefinitely.
+    // Added IDisposable + JS interop identical to RelationPicker.
+    private string _pickerId = "mrp-" + Guid.NewGuid().ToString("N")[..8];
+    private DotNetObjectReference<MultiRelationPicker>? _selfRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("lidstroem.registerClickOutside", _pickerId, _selfRef);
+        }
+    }
+
+    [JSInvokable]
+    public void Close()
+    {
+        _open = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        _selfRef?.Dispose();
+        _ = JS.InvokeVoidAsync("lidstroem.unregisterClickOutside", _pickerId);
+    }
 
     protected override async Task OnParametersSetAsync()
     {

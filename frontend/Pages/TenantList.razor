@@ -5,79 +5,94 @@
 @inject PermissionService Permissions
 @inject NavigationManager Nav
 
-<PageTitle>Tenants</PageTitle>
+<PageTitle>Organisations</PageTitle>
 
 @if (!Permissions.Has("SuperAdmin.ManageTenants"))
 {
-    <div class="empty-state">
-        <p>You do not have permission to manage tenants.</p>
-    </div>
+    <div class="list-empty"><p>You do not have permission to manage organisations.</p></div>
     return;
 }
 
 <div class="page-header">
-    <h1 class="page-title">Tenants</h1>
-    <button class="btn btn-primary" @onclick="OpenCreate">
-        <span class="btn-icon">+</span> New tenant
-    </button>
+    <h1 class="page-title">Organisations</h1>
+    <div class="page-header-actions">
+        <button class="btn btn-primary" @onclick="OpenCreate">
+            <Icon Name="plus" Size="14" /> New organisation
+        </button>
+    </div>
 </div>
 
 @if (_loading)
 {
-    <div class="loading-indicator">Loading…</div>
+    <div class="skeleton-page">
+        @for (var i = 0; i < 4; i++) { <div class="skeleton-row" style="margin-bottom:.5rem;"></div> }
+    </div>
 }
 else if (_tenants.Count == 0)
 {
-    <div class="empty-state">No tenants found.</div>
+    <div class="list-empty">
+        <Icon Name="building-2" Size="40" />
+        <p>No organisations yet.</p>
+        <button class="btn btn-primary" @onclick="OpenCreate">Create the first organisation</button>
+    </div>
 }
 else
 {
-    <div class="entity-table-wrap">
-        <table class="entity-table">
+    @* BUG-23 FIX: was using entity-table / empty-state / cell-primary / cell-actions
+       which are not defined in app.css. Replaced with design-system classes:
+       data-table-wrapper, data-table, list-empty, actions-cell. *@
+    <div class="data-table-wrapper">
+        <table class="data-table">
             <thead>
                 <tr>
                     <th>Name</th>
                     <th>Contact email</th>
-                    <th>Plugins</th>
+                    <th>Active plugins</th>
                     <th>Status</th>
-                    <th></th>
+                    <th class="actions-col"></th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var t in _tenants)
                 {
-                    <tr>
-                        <td class="cell-primary">@Name(t)</td>
+                    var tid = TenantId(t);
+                    <tr class="data-row" @onclick="() => OpenDetail(tid)">
+                        <td><strong>@Name(t)</strong></td>
                         <td>@(ContactEmail(t) ?? "—")</td>
                         <td>@PluginCount(t)</td>
                         <td>
                             @if (IsActive(t))
                             {
-                                <span class="badge badge-green">Active</span>
+                                <span class="badge badge-success">Active</span>
                             }
                             else
                             {
-                                <span class="badge badge-grey">Inactive</span>
+                                <span class="badge badge-neutral">Inactive</span>
                             }
                         </td>
-                        <td class="cell-actions">
-                            <button class="btn btn-sm" @onclick="() => OpenDetail(Id(t))">Edit</button>
-                            @if (IsActive(t))
-                            {
-                                <button class="btn btn-sm btn-ghost"
-                                        @onclick="() => ToggleActive(t, false)"
-                                        disabled="@_busy">
-                                    Deactivate
+                        <td class="actions-cell" @onclick:stopPropagation>
+                            <div class="row-actions">
+                                <button class="btn btn-ghost btn-sm"
+                                        @onclick="() => OpenDetail(tid)">
+                                    Edit
                                 </button>
-                            }
-                            else
-                            {
-                                <button class="btn btn-sm btn-ghost"
-                                        @onclick="() => ToggleActive(t, true)"
-                                        disabled="@_busy">
-                                    Activate
-                                </button>
-                            }
+                                @if (IsActive(t))
+                                {
+                                    <button class="btn btn-ghost btn-sm"
+                                            @onclick="() => ToggleActive(t, false)"
+                                            disabled="@_busy">
+                                        Deactivate
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-ghost btn-sm"
+                                            @onclick="() => ToggleActive(t, true)"
+                                            disabled="@_busy">
+                                        Activate
+                                    </button>
+                                }
+                            </div>
                         </td>
                     </tr>
                 }
@@ -86,30 +101,43 @@ else
     </div>
 }
 
+@if (_error != null)
+{
+    <div class="form-error" style="margin-top:1rem;">@_error</div>
+}
+
+@* ── Create modal ──────────────────────────────────────────────────────────── *@
 @if (_showCreate)
 {
     <div class="modal-backdrop" @onclick="CloseCreate">
         <div class="modal" @onclick:stopPropagation>
             <div class="modal-header">
-                <h2 class="modal-title">New tenant</h2>
+                <h2 class="modal-title">New organisation</h2>
                 <button class="modal-close" @onclick="CloseCreate">✕</button>
             </div>
             <div class="modal-body">
-                <div class="form-field">
-                    <label class="field-label">Name <span class="required">*</span></label>
-                    <input class="field-input" @bind="_newName" placeholder="Tenant name" />
+                <div class="form-field required">
+                    <label class="field-label">Name</label>
+                    <input class="field-input" @bind="_newName" placeholder="Organisation name" />
                 </div>
                 <div class="form-field">
                     <label class="field-label">Contact email</label>
-                    <input class="field-input" type="email" @bind="_newEmail" placeholder="contact@example.com" />
+                    <input class="field-input" type="email" @bind="_newEmail"
+                           placeholder="contact@example.com" />
                 </div>
                 <div class="form-field">
                     <label class="field-label">Description</label>
-                    <textarea class="field-input" @bind="_newDescription" rows="3" placeholder="Optional description"></textarea>
+                    <textarea class="field-input" @bind="_newDescription"
+                              rows="3" placeholder="Optional"></textarea>
                 </div>
                 <div class="form-field">
                     <label class="field-label">Actor quota</label>
-                    <input class="field-input" type="number" @bind="_newActorQuota" placeholder="Unlimited" min="1" max="100000" />
+                    @* BUG-32 FIX: int? @bind on number input throws parse exception in
+                       Blazor WASM when field is left empty. Bind to string and parse manually. *@
+                    <input class="field-input" type="number"
+                           value="@_newActorQuotaRaw"
+                           @oninput="e => _newActorQuotaRaw = e.Value?.ToString() ?? string.Empty"
+                           placeholder="Unlimited" min="1" max="100000" />
                 </div>
                 @if (_createError != null)
                 {
@@ -118,10 +146,9 @@ else
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" @onclick="CloseCreate">Cancel</button>
-                <button class="btn btn-primary"
-                        @onclick="CreateTenant"
+                <button class="btn btn-primary" @onclick="CreateTenant"
                         disabled="@(_busy || string.IsNullOrWhiteSpace(_newName))">
-                    @(_busy ? "Saving…" : "Create tenant")
+                    @(_busy ? "Creating…" : "Create organisation")
                 </button>
             </div>
         </div>
@@ -132,11 +159,14 @@ else
     private List<JsonElement> _tenants = new();
     private bool _loading = true;
     private bool _busy;
-    private bool _showCreate;
-    private string _newName = string.Empty;
-    private string _newEmail = string.Empty;
-    private string _newDescription = string.Empty;
-    private int? _newActorQuota;
+    private string? _error;
+
+    private bool    _showCreate;
+    private string  _newName        = string.Empty;
+    private string  _newEmail       = string.Empty;
+    private string  _newDescription = string.Empty;
+    // BUG-32 FIX: int? bind on number-input throws in Blazor WASM when empty.
+    private string  _newActorQuotaRaw = string.Empty;
     private string? _createError;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
@@ -144,19 +174,18 @@ else
     private async Task LoadAsync()
     {
         _loading = true;
+        _error   = null;
         var result = await Api.GetListAsync("/api/admin/tenants");
+        if (result == null) _error = "Failed to load organisations.";
         _tenants = result ?? new();
         _loading = false;
     }
 
     private void OpenCreate()
     {
-        _newName = string.Empty;
-        _newEmail = string.Empty;
-        _newDescription = string.Empty;
-        _newActorQuota = null;
+        _newName = _newEmail = _newDescription = _newActorQuotaRaw = string.Empty;
         _createError = null;
-        _showCreate = true;
+        _showCreate  = true;
     }
 
     private void CloseCreate() => _showCreate = false;
@@ -164,23 +193,21 @@ else
     private async Task CreateTenant()
     {
         if (string.IsNullOrWhiteSpace(_newName)) return;
-        _busy = true;
-        _createError = null;
+        _busy = true; _createError = null;
 
-        var dto = new
+        var result = await Api.PostAsync("/api/admin/tenants", new
         {
-            Name = _newName.Trim(),
+            Name         = _newName.Trim(),
             ContactEmail = string.IsNullOrWhiteSpace(_newEmail) ? null : _newEmail.Trim(),
-            Description = string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription.Trim(),
-            ActorQuota = _newActorQuota
-        };
+            Description  = string.IsNullOrWhiteSpace(_newDescription) ? null : _newDescription.Trim(),
+            ActorQuota   = int.TryParse(_newActorQuotaRaw, out var q) ? q : (int?)null
+        });
 
-        var result = await Api.PostAsync("/api/admin/tenants", dto);
         _busy = false;
 
         if (result == null)
         {
-            _createError = "Failed to create tenant. Check that the name is unique.";
+            _createError = "Failed to create. Check that the name is unique.";
             return;
         }
 
@@ -191,31 +218,21 @@ else
     private async Task ToggleActive(JsonElement t, bool activate)
     {
         _busy = true;
-        var id = Id(t);
+        var id  = TenantId(t);
         var url = activate
-            ? $"/api/admin/tenants/{id}/activate"
-            : $"/api/admin/tenants/{id}/deactivate";
+            ? "/api/admin/tenants/" + id + "/activate"
+            : "/api/admin/tenants/" + id + "/deactivate";
         await Api.PutAsync(url, new { });
-        await LoadAsync();
         _busy = false;
+        await LoadAsync();
     }
 
-    private void OpenDetail(int id) => Nav.NavigateTo($"/admin/tenants/{id}");
+    private void OpenDetail(int id) => Nav.NavigateTo("/admin/tenants/" + id);
 
-    // ── helpers ────────────────────────────────────────────────────────────────
-
-    private static int Id(JsonElement t) =>
-        t.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
-
-    private static string Name(JsonElement t) =>
-        t.TryGetProperty("name", out var p) ? p.GetString() ?? "—" : "—";
-
-    private static string? ContactEmail(JsonElement t) =>
-        t.TryGetProperty("contactEmail", out var p) ? p.GetString() : null;
-
-    private static bool IsActive(JsonElement t) =>
-        t.TryGetProperty("isActive", out var p) && p.GetBoolean();
-
+    private static int     TenantId(JsonElement t)     => t.TryGetProperty("id",           out var p) ? p.GetInt32()    : 0;
+    private static string  Name(JsonElement t)          => t.TryGetProperty("name",         out var p) ? p.GetString() ?? "—" : "—";
+    private static string? ContactEmail(JsonElement t)  => t.TryGetProperty("contactEmail", out var p) ? p.GetString()  : null;
+    private static bool    IsActive(JsonElement t)      => t.TryGetProperty("isActive",     out var p) && p.GetBoolean();
     private static int PluginCount(JsonElement t)
     {
         if (!t.TryGetProperty("pluginAssignments", out var arr)) return 0;

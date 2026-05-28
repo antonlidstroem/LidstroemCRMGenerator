@@ -88,6 +88,43 @@ public abstract class BaseLidstroemController<T> : ControllerBase
 
     protected virtual string GetCreatedAtActionName() => $"Get{typeof(T).Name}";
 
+    /// <summary>
+    /// Generic paginated list endpoint. Sets X-Total-Count response header so
+    /// the frontend can calculate TotalPages without fetching all records.
+    ///
+    /// POINT 1 FIX: EntityList.razor uses Api.LastTotalCount (read from this header)
+    /// to drive server-side pagination. Without this header the frontend fell back
+    /// to items.Count (always ≤ pageSize) and showed only one page even when more existed.
+    ///
+    /// Usage in a concrete controller:
+    ///   [HttpGet]
+    ///   public Task<ActionResult<IEnumerable<T>>> GetAll(
+    ///       [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    ///       => GetGeneric(page, pageSize);
+    /// </summary>
+    protected async Task<ActionResult<IEnumerable<T>>> GetGeneric(
+        int page = 1, int pageSize = 50,
+        IQueryable<T>? query = null)
+    {
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        page     = Math.Max(1, page);
+
+        var q = query ?? _context.Set<T>().AsQueryable();
+
+        var totalCount = await q.CountAsync();
+
+        // CORS: expose the header so browsers allow JS to read it cross-origin
+        Response.Headers["X-Total-Count"]               = totalCount.ToString();
+        Response.Headers["Access-Control-Expose-Headers"] = "X-Total-Count";
+
+        var items = await q
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return Ok(items);
+    }
+
     // ── Realtime broadcast ────────────────────────────────────────────────────
 
     private void BroadcastFireAndForget(int entityId, ChangeType changeType)

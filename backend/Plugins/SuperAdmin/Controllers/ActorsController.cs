@@ -81,9 +81,17 @@ public class ActorsController : BaseLidstroemController<Actor>
     {
         pageSize = Math.Clamp(pageSize, 1, 200);
         page     = Math.Max(1, page);
-        return Ok(await _context.Set<Actor>()
-            .OrderBy(a => a.DisplayName)
-            .Skip((page - 1) * pageSize).Take(pageSize)
+
+        var query = _context.Set<Actor>().OrderBy(a => a.DisplayName);
+
+        // POINT 5 FIX: Set X-Total-Count so ActorList pagination works correctly.
+        var totalCount = await query.CountAsync();
+        Response.Headers["X-Total-Count"]                = totalCount.ToString();
+        Response.Headers["Access-Control-Expose-Headers"] = "X-Total-Count";
+
+        return Ok(await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .ToListAsync());
     }
 

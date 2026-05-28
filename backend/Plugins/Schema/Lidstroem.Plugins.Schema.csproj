@@ -15,5 +15,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\Core\Lidstroem.Core.csproj" />
     <ProjectReference Include="..\..\Shared\Lidstroem.Shared.csproj" />
+    <ProjectReference Include="..\SuperAdmin\Lidstroem.Plugins.SuperAdmin.csproj" />
   </ItemGroup>
 </Project>

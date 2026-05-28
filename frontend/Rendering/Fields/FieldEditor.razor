@@ -93,14 +93,14 @@
     case FieldType.Relation:
         <RelationPicker Field="@Field"
                         Value="@StringValue"
-                        ValueChanged="v => Emit(v)"
+                        ValueChanged="@_stringCallback"
                         Disabled="@Disabled" />
         break;
 
     case FieldType.MultiRelation:
         <MultiRelationPicker Field="@Field"
                              Value="@StringValue"
-                             ValueChanged="v => Emit(v)"
+                             ValueChanged="@_stringCallback"
                              Disabled="@Disabled" />
         break;
 
@@ -143,6 +143,13 @@
     [Parameter] public EventCallback<object?> ValueChanged { get; set; }
     [Parameter] public bool Disabled { get; set; }
 
+    // Pre-built callback used by RelationPicker and MultiRelationPicker which
+    // declare ValueChanged as EventCallback<string?>. Razor does not allow
+    // generic type arguments in attribute values (RZ9986), so we build the
+    // correctly-typed callback here and reference it by name in markup.
+    private EventCallback<string?> _stringCallback =>
+        EventCallback.Factory.Create<string?>(this, v => Emit(v));
+
     private string StringValue   => Value?.ToString() ?? string.Empty;
     private bool   BoolValue     => Value is bool b ? b : bool.TryParse(Value?.ToString(), out var r) && r;
     private string DateValue     => Value is DateTime dt ? dt.ToString("yyyy-MM-dd") : StringValue;
@@ -152,8 +159,6 @@
 
     private async Task HandleFileChange(ChangeEventArgs e)
     {
-        // File uploads are handled by the Resources plugin endpoint
-        // For now, emit the filename as a placeholder
         await Emit(e.Value?.ToString());
     }
 }

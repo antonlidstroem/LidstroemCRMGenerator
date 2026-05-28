@@ -31,12 +31,20 @@ public class TenantsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Tenant>>> GetTenants() =>
-        Ok(await _context.Set<Tenant>().IgnoreQueryFilters()
+    public async Task<ActionResult<IEnumerable<Tenant>>> GetTenants()
+    {
+        var query = _context.Set<Tenant>().IgnoreQueryFilters()
             .Include(t => t.PluginAssignments)
             .Include(t => t.CustomPages)
-            .OrderBy(t => t.Name)
-            .ToListAsync());
+            .OrderBy(t => t.Name);
+
+        // POINT 5 FIX: Set X-Total-Count for TenantList pagination.
+        var totalCount = await query.CountAsync();
+        Response.Headers["X-Total-Count"]                = totalCount.ToString();
+        Response.Headers["Access-Control-Expose-Headers"] = "X-Total-Count";
+
+        return Ok(await query.ToListAsync());
+    }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<Tenant>> GetTenant(int id)
@@ -336,12 +344,21 @@ public class SystemHealthController : ControllerBase
     {
         const int MaxPageSize = 200;
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
-        page = Math.Max(1, page);
+        page     = Math.Max(1, page);
 
         var query = _context.Set<SystemLog>().IgnoreQueryFilters().AsQueryable();
         if (!string.IsNullOrEmpty(level)) query = query.Where(l => l.Level == level);
-        return Ok(await query.OrderByDescending(l => l.LoggedAt)
-            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync());
+        query = query.OrderByDescending(l => l.LoggedAt);
+
+        // POINT 5 FIX: Set X-Total-Count for log pagination.
+        var totalCount = await query.CountAsync();
+        Response.Headers["X-Total-Count"]                = totalCount.ToString();
+        Response.Headers["Access-Control-Expose-Headers"] = "X-Total-Count";
+
+        return Ok(await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync());
     }
 }
 

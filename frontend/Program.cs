@@ -26,7 +26,10 @@ builder.Services.AddScoped<ApiClient>();
 builder.Services.AddScoped<SchemaService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<SkinService>();
-builder.Services.AddScoped<ReportService>();       // ← ny
-builder.Services.AddSingleton<CustomPageRegistry>();
+builder.Services.AddScoped<ReportService>();
+// BUG-27 FIX: CustomPageRegistry was AddSingleton but calls ApiClient which is
+// AddScoped — capturing a scoped dependency in a singleton is a DI anti-pattern
+// that causes incorrect behaviour in server-side rendering. Changed to AddScoped.
+builder.Services.AddScoped<CustomPageRegistry>();
 
 await builder.Build().RunAsync();

@@ -47,15 +47,26 @@ public class ActivitiesController : BaseLidstroemController<Activity>
     {
         pageSize = Math.Clamp(pageSize, 1, 200);
         page     = Math.Max(1, page);
-        return Ok(await _context.Set<Activity>()
-            .OrderByDescending(a => a.StartDate)
-            .Skip((page - 1) * pageSize).Take(pageSize)
+
+        var query = _context.Set<Activity>().OrderByDescending(a => a.StartDate);
+
+        // POINT 1 FIX: Set X-Total-Count so EntityList.razor can calculate TotalPages
+        // without fetching all records. Also expose the header for cross-origin CORS.
+        var totalCount = await query.CountAsync();
+        Response.Headers["X-Total-Count"]                = totalCount.ToString();
+        Response.Headers["Access-Control-Expose-Headers"] = "X-Total-Count";
+
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
             .Select(a => new
             {
                 a.Id, a.Title, a.Description, a.StartDate, a.EndDate, a.ProjectId,
                 InvolvedActorCount = a.InvolvedActors.Count,
             })
-            .ToListAsync());
+            .ToListAsync();
+
+        return Ok(items);
     }
 
     [HttpGet("by-project/{projectId:int}")]

@@ -26,10 +26,19 @@ public class ApiClient
         _auth = auth;
     }
 
+    // BUG-37 FIX: Exposes total item count from X-Total-Count response header.
+    // Backend sets this header on paginated endpoints. Used by EntityList to
+    // calculate TotalPages without fetching all records.
+    public int LastTotalCount { get; private set; }
+
     public async Task<List<JsonElement>?> GetListAsync(string url)
     {
         var response = await SendAsync(HttpMethod.Get, url);
         if (!response.IsSuccessStatusCode) return null;
+
+        LastTotalCount = response.Headers.TryGetValues("X-Total-Count", out var vals)
+            && int.TryParse(vals.FirstOrDefault(), out var count) ? count : 0;
+
         return await response.Content.ReadFromJsonAsync<List<JsonElement>>(JsonOptions);
     }
 
@@ -44,7 +53,25 @@ public class ApiClient
     {
         var response = await SendAsync(HttpMethod.Post, url, body);
         if (!response.IsSuccessStatusCode) return null;
-        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+
+        // BUG-16 FIX: ReadFromJsonAsync<JsonElement> throws JsonException on 204 No Content
+        // because there are no JSON tokens in an empty body. Endpoints like /api/rbac/revoke
+        // return 204 — callers that check (result == null) interpreted the exception as a
+        // failure and showed an error message even though the operation succeeded.
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent
+         || response.Content.Headers.ContentLength == 0)
+            return JsonDocument.Parse("{}").RootElement;
+
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ApiClient] JSON parse error POST {url}: {ex.Message}");
+            // Return empty object so callers get non-null (= success) without crashing.
+            return JsonDocument.Parse("{}").RootElement;
+        }
     }
 
     public async Task<bool> PutAsync(string url, object body)
@@ -57,6 +84,22 @@ public class ApiClient
     {
         var response = await SendAsync(HttpMethod.Delete, url);
         return response.IsSuccessStatusCode;
+    }
+
+    // BUG-29 FIX: Authenticated binary download — carries Bearer token unlike <a href>.
+    public async Task<byte[]?> GetBytesAsync(string url)
+    {
+        try
+        {
+            var response = await _http.GetAsync(url);
+            if (!response.IsSuccessStatusCode) return null;
+            return await response.Content.ReadAsByteArrayAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ApiClient] GetBytesAsync {url}: {ex.Message}");
+            return null;
+        }
     }
 
     public async Task<bool> PatchAsync(string url, object body)

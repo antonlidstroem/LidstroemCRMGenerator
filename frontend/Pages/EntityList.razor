@@ -1,7 +1,7 @@
-@page "/entity/{EntityType}"
 @using System.Text.Json
 @using Lidstroem.Frontend.Core.Models
 @using Lidstroem.Frontend.Core.Services
+@implements IDisposable
 @inject SchemaService Schema
 @inject ApiClient Api
 @inject PermissionService Permissions
@@ -12,11 +12,8 @@
 @if (_loading)
 {
     <div class="skeleton-page">
-        <div class="skeleton-row" style="width:40%; height:2rem; margin-bottom:1.5rem;"></div>
-        @for (var i = 0; i < 6; i++)
-        {
-            <div class="skeleton-row"></div>
-        }
+        <div class="skeleton-row" style="width:40%;height:2rem;margin-bottom:1.5rem;"></div>
+        @for (var i = 0; i < 6; i++) { <div class="skeleton-row" style="margin-bottom:.5rem;"></div> }
     </div>
 }
 else if (_schema == null)
@@ -32,24 +29,21 @@ else
         <div class="page-header-actions">
             @foreach (var action in ToolbarActions)
             {
-                <button class="btn btn-ghost btn-sm" @onclick="() => RunAction(action)">
-                    @if (action.Icon != null) { <Icon Name="@action.Icon" Size="14" /> }
-                    @action.DisplayName
+                var a = action;
+                <button class="btn btn-ghost btn-sm" @onclick="() => RunAction(a)">
+                    @if (a.Icon != null) { <Icon Name="@a.Icon" Size="14" /> }
+                    @a.DisplayName
                 </button>
             }
             <button class="btn btn-primary" @onclick="OpenCreate">
-                <Icon Name="plus" Size="14" />
-                New @_schema.DisplayName
+                <Icon Name="plus" Size="14" /> New @_schema.DisplayName
             </button>
         </div>
     </div>
 
-    @if (_error != null)
-    {
-        <div class="form-error" style="margin-bottom:1rem;">@_error</div>
-    }
+    @if (_error != null) { <div class="form-error" style="margin-bottom:1rem;">@_error</div> }
 
-    @if (_items.Count == 0)
+    @if (PagedItems.Count == 0 && !_loading)
     {
         <div class="list-empty">
             <Icon Name="inbox" Size="40" />
@@ -73,33 +67,29 @@ else
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var item in _items)
+                    @foreach (var item in PagedItems)
                     {
-                        var id = GetId(item);
-                        <tr class="data-row" @onclick="() => NavigateToDetail(id)">
+                        var id      = GetId(item);
+                        var editUrl = "/entity/" + EntityType + "/" + id;
+                        <tr class="data-row" @onclick="() => Nav.NavigateTo(editUrl)">
                             @foreach (var col in _columns)
                             {
                                 <td>@FormatCell(item, col)</td>
                             }
                             <td class="actions-cell" @onclick:stopPropagation>
                                 <div class="row-actions">
-                                    @foreach (var action in RowActions)
+                                    @foreach (var ra in RowActions)
                                     {
+                                        var rowAction = ra;
                                         <button class="btn btn-ghost btn-sm"
-                                                @onclick="() => RunAction(action, id)"
-                                                title="@action.DisplayName">
-                                            @if (action.Icon != null)
-                                            {
-                                                <Icon Name="@action.Icon" Size="13" />
-                                            }
-                                            else
-                                            {
-                                                @action.DisplayName
-                                            }
+                                                @onclick="() => RunAction(rowAction, id)"
+                                                title="@rowAction.DisplayName">
+                                            @if (rowAction.Icon != null) { <Icon Name="@rowAction.Icon" Size="13" /> }
+                                            else { @rowAction.DisplayName }
                                         </button>
                                     }
                                     <button class="btn btn-ghost btn-sm"
-                                            @onclick="() => NavigateToDetail(id)">
+                                            @onclick="() => Nav.NavigateTo(editUrl)">
                                         Edit
                                     </button>
                                     <button class="btn btn-ghost btn-sm"
@@ -114,6 +104,19 @@ else
                 </tbody>
             </table>
         </div>
+
+        @if (TotalPages > 1)
+        {
+            <div class="pagination">
+                <button class="btn btn-ghost btn-sm" @onclick="PrevPage" disabled="@(_page == 1)">
+                    <Icon Name="arrow-left" Size="14" />
+                </button>
+                <span class="pagination-label">@_page / @TotalPages</span>
+                <button class="btn btn-ghost btn-sm" @onclick="NextPage" disabled="@(_page >= TotalPages)">
+                    <Icon Name="arrow-right" Size="14" />
+                </button>
+            </div>
+        }
     }
 }
 
@@ -124,13 +127,11 @@ else
         <div class="modal modal--sm" @onclick:stopPropagation>
             <div class="modal-header">
                 <h2 class="modal-title">Delete @(_schema?.DisplayName ?? "item")?</h2>
+                <button class="modal-close" @onclick="CancelDelete">✕</button>
             </div>
             <div class="modal-body">
                 <p>This action cannot be undone.</p>
-                @if (_deleteError != null)
-                {
-                    <div class="form-error" style="margin-top:.75rem;">@_deleteError</div>
-                }
+                @if (_deleteError != null) { <div class="form-error" style="margin-top:.75rem;">@_deleteError</div> }
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" @onclick="CancelDelete">Cancel</button>
@@ -146,30 +147,74 @@ else
     [Parameter] public string EntityType { get; set; } = string.Empty;
 
     private EntitySchema? _schema;
-    private List<JsonElement> _items = new();
+    private List<JsonElement> _items   = new();
     private List<FieldDefinition> _columns = new();
-    private bool _loading = true;
-    private bool _busy;
+    private bool    _loading = true;
+    private bool    _busy;
     private string? _error;
-    private int? _deleteId;
+    private int?    _deleteId;
     private string? _deleteError;
 
+    private int  _page     = 1;
+    private int  _totalCount = 0;
+    private const int PageSize = 50;
+
+    // BUG-37 FIX: Previously fetched 500 rows in one request and paginated client-side.
+    // Works in demo but fails with thousands of records. Now uses server-side paging:
+    // only the current page is fetched, _totalCount drives the pagination UI.
+    private List<JsonElement> PagedItems => _items;   // already paged from server
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_totalCount / (double)PageSize));
+    private async Task PrevPage() { if (_page > 1) { _page--; await LoadAsync(); } }
+    private async Task NextPage() { if (_page < TotalPages) { _page++; await LoadAsync(); } }
+
     private IEnumerable<ActionDefinition> ToolbarActions =>
-        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Toolbar) ?? [];
+        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Toolbar)
+        ?? Array.Empty<ActionDefinition>();
     private IEnumerable<ActionDefinition> RowActions =>
-        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Row) ?? [];
+        _schema?.Actions.Where(a => a.Placement == ActionPlacement.Row)
+        ?? Array.Empty<ActionDefinition>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // FIX: Subscribe to location changes so the list reloads when the user
+        // navigates back from the form — OnParametersSetAsync does NOT fire again
+        // when EntityType stays the same (e.g. back from /entity/Contact/5 to
+        // /entity/Contact). Without this the list stays stale after create/edit.
+        Nav.LocationChanged += OnLocationChanged;
+        await LoadAsync();
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+
+    private async void OnLocationChanged(object? sender,
+        Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        // BUG-14 FIX: Normalise both sides to lowercase and trim trailing slashes.
+        // EntityType casing from route parameter can differ from the link href,
+        // causing the reload to never fire and leaving a stale list after navigation.
+        var path   = new Uri(e.Location).AbsolutePath.TrimEnd('/').ToLowerInvariant();
+        var myPath = ("/entity/" + EntityType).TrimEnd('/').ToLowerInvariant();
+        if (path == myPath)
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
-        _loading = true;
-        _error = null;
-        _items.Clear();
-        _columns.Clear();
+        // Fires when EntityType changes (navigating between entity types)
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true; _error = null;
 
         _schema = await Schema.GetAsync(EntityType);
         if (_schema != null)
         {
-            // Resolve which columns to show — DefaultListColumns first, then all ShowInList fields.
             var fieldMap = _schema.Fields.ToDictionary(f => f.FieldName, StringComparer.OrdinalIgnoreCase);
             _columns = _schema.DefaultListColumns
                 .Where(c => fieldMap.ContainsKey(c))
@@ -179,51 +224,38 @@ else
             if (_columns.Count == 0)
                 _columns = _schema.Fields.Where(f => f.ShowInList).OrderBy(f => f.SortOrder).ToList();
 
-            await LoadItemsAsync();
+            // BUG-37 FIX: Use server-side paging. Pass page/pageSize to backend.
+            // GetListAsync also returns X-Total-Count header when available — read it
+            // to drive TotalPages. If header is absent fall back to items.Count.
+            var result = await Api.GetListAsync(
+                _schema.ApiBasePath + $"?page={_page}&pageSize={PageSize}");
+            _items = result ?? new();
+
+            // Read total count from response header if ApiClient exposes it
+            _totalCount = Api.LastTotalCount > 0 ? Api.LastTotalCount : _items.Count;
         }
 
         _loading = false;
     }
 
-    private async Task LoadItemsAsync()
-    {
-        if (_schema == null) return;
-        var result = await Api.GetListAsync($"{_schema.ApiBasePath}?page=1&pageSize=100");
-        _items = result ?? new();
-    }
+    private void OpenCreate() => Nav.NavigateTo("/entity/" + EntityType + "/new");
 
-    private void OpenCreate() => Nav.NavigateTo($"/entity/{EntityType}/new");
-    private void NavigateToDetail(int id) => Nav.NavigateTo($"/entity/{EntityType}/{id}");
-
-    private void ConfirmDelete(int id)
-    {
-        _deleteId = id;
-        _deleteError = null;
-    }
-
-    private void CancelDelete()
-    {
-        _deleteId = null;
-        _deleteError = null;
-    }
+    private void ConfirmDelete(int id) { _deleteId = id; _deleteError = null; }
+    private void CancelDelete()        { _deleteId = null; _deleteError = null; }
 
     private async Task ExecuteDelete()
     {
         if (_schema == null || !_deleteId.HasValue) return;
-        _busy = true;
-        _deleteError = null;
+        _busy = true; _deleteError = null;
 
-        var ok = await Api.DeleteAsync($"{_schema.ApiBasePath}/{_deleteId.Value}");
+        var ok = await Api.DeleteAsync(_schema.ApiBasePath + "/" + _deleteId.Value);
         _busy = false;
 
-        if (!ok)
-        {
-            _deleteError = "Could not delete. The item may be referenced elsewhere.";
-            return;
-        }
+        if (!ok) { _deleteError = "Could not delete. The item may be referenced elsewhere."; return; }
 
         _deleteId = null;
-        await LoadItemsAsync();
+        _items.RemoveAll(el => GetId(el) == _deleteId.GetValueOrDefault());
+        await LoadAsync();
     }
 
     private async Task RunAction(ActionDefinition action, int? id = null)
@@ -235,8 +267,7 @@ else
 
         if (action.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
         {
-            Nav.NavigateTo(url);
-            return;
+            Nav.NavigateTo(url); return;
         }
 
         _busy = true;
@@ -246,12 +277,9 @@ else
             await Api.PutAsync(url, new { });
         else if (action.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             await Api.DeleteAsync(url);
-
         _busy = false;
-        await LoadItemsAsync();
+        await LoadAsync();
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static int GetId(JsonElement el) =>
         el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
@@ -259,40 +287,33 @@ else
     private static string FormatCell(JsonElement item, FieldDefinition col)
     {
         if (!item.TryGetProperty(col.FieldName, out var val) &&
-            !item.TryGetProperty(ToCamelCase(col.FieldName), out val))
+            !item.TryGetProperty(char.ToLower(col.FieldName[0]) + col.FieldName[1..], out val))
             return "—";
 
         return val.ValueKind switch
         {
-            JsonValueKind.Null      => "—",
-            JsonValueKind.True      => "Yes",
-            JsonValueKind.False     => "No",
-            JsonValueKind.String    => FormatStringValue(val.GetString() ?? "", col),
-            JsonValueKind.Number    => val.TryGetDecimal(out var d) ? d.ToString("G") : val.GetRawText(),
-            _                       => val.GetRawText()
+            JsonValueKind.Null  => "—",
+            JsonValueKind.True  => "Yes",
+            JsonValueKind.False => "No",
+            JsonValueKind.String => FormatString(val.GetString() ?? "", col),
+            JsonValueKind.Number => val.TryGetDecimal(out var d) ? d.ToString("G") : val.GetRawText(),
+            _ => val.GetRawText()
         };
     }
 
-    private static string FormatStringValue(string raw, FieldDefinition col)
+    private static string FormatString(string raw, FieldDefinition col)
     {
         if (string.IsNullOrEmpty(raw)) return "—";
-
-        if (col.Type is FieldType.Date && DateTime.TryParse(raw, out var d))
+        if (col.Type == FieldType.Date && DateTime.TryParse(raw, out var d))
             return d.ToString("d MMM yyyy");
-
-        if (col.Type is FieldType.DateTime && DateTime.TryParse(raw, out var dt))
+        if (col.Type == FieldType.DateTime && DateTime.TryParse(raw, out var dt))
             return dt.ToString("d MMM yyyy HH:mm");
-
         if (col.EnumOptions != null)
         {
             var opt = col.EnumOptions.FirstOrDefault(o =>
                 string.Equals(o.Value, raw, StringComparison.OrdinalIgnoreCase));
             if (opt != null) return opt.DisplayName;
         }
-
         return raw.Length > 80 ? raw[..77] + "…" : raw;
     }
-
-    private static string ToCamelCase(string s) =>
-        string.IsNullOrEmpty(s) ? s : char.ToLower(s[0]) + s[1..];
 }

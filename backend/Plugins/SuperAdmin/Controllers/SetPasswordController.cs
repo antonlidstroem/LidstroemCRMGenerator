@@ -70,6 +70,9 @@ public class SetPasswordController : ControllerBase
 
     // ── Flow A: SuperAdmin sets a password directly ───────────────────────────
 
+    // BUG-2 FIX: Originally [HttpPost] but called via ApiClient.PutAsync — 405 Method Not Allowed.
+    // Accept both PUT (from admin UI) and POST (for future programmatic use).
+    [HttpPut("set-password")]
     [HttpPost("set-password")]
     [Authorize]
     [RequirePermission("SuperAdmin.ManageCredentials")]

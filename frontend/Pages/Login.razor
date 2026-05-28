@@ -2,6 +2,7 @@
 @using Lidstroem.Frontend.Core.Auth
 @using Lidstroem.Frontend.Core.Services
 @inject AuthService Auth
+@inject SchemaService Schema
 @inject NavigationManager Nav
 @inject PermissionService Permissions
 
@@ -86,10 +87,34 @@
             var success = await Auth.LoginAsync(_identifier, _password);
             if (success)
             {
-                await Permissions.LoadAsync();
-                // NavigateTo triggers a component disposal — _loading = false after this
-                // is unreachable in the success path, which is fine.
-                Nav.NavigateTo("/dashboard");
+                // BUG-31 FIX: Task.Delay(150) was a magic constant — too short on slow
+                // backends, causing Has() to return false and SuperAdmin to land on /dashboard.
+                // Fix: subscribe to a one-shot PermissionsLoaded event that fires when
+                // Permissions.LoadAsync completes, then navigate. Timeout after 3s as safety.
+                Schema.Invalidate();
+
+                var tcs     = new TaskCompletionSource<bool>();
+                var timeout = Task.Delay(3000);
+
+                void OnPermissionsLoaded()
+                {
+                    Permissions.PermissionsLoaded -= OnPermissionsLoaded;
+                    tcs.TrySetResult(true);
+                }
+
+                Permissions.PermissionsLoaded += OnPermissionsLoaded;
+
+                // If permissions were already loaded before we subscribed, complete immediately
+                if (Permissions.IsLoaded)
+                    tcs.TrySetResult(true);
+
+                await Task.WhenAny(tcs.Task, timeout);
+
+                var destination = Permissions.Has("SuperAdmin.ManageTenants")
+                    ? "/admin/tenants"
+                    : "/dashboard";
+
+                Nav.NavigateTo(destination);
                 return;
             }
             _error = "Invalid credentials. Please try again.";

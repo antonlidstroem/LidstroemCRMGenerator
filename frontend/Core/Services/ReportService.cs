@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.JSInterop;
 
 namespace Lidstroem.Frontend.Core.Services;
 
@@ -51,6 +52,26 @@ public class ReportService
         return JsonSerializer.Deserialize<ReportResultVm>(json.Value.GetRawText(), _jsonOptions);
     }
 
+    // BUG-29 FIX: GetCsvDownloadUrl returned a bare href for use in <a href="...">.
+    // Browser-initiated requests carry no Authorization header — the endpoint
+    // returns 401 for every authenticated user. Fix: fetch via ApiClient (which
+    // injects Bearer token), convert to a JS blob URL and trigger download in browser.
+    public async Task DownloadCsvAsync(
+        IJSRuntime js, string key, Dictionary<string, string?> parameters)
+    {
+        var qs = string.Join("&", parameters
+            .Where(p => p.Value != null)
+            .Select(p => $"{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value!)}"));
+        var url = $"/api/reports/{Uri.EscapeDataString(key)}/run?format=csv&{qs}";
+
+        var bytes = await _api.GetBytesAsync(url);
+        if (bytes == null) return;
+
+        // Trigger a client-side download via a JS Blob URL — no page navigation needed.
+        await js.InvokeVoidAsync("lidstroem.downloadBytes", bytes, key + ".csv", "text/csv");
+    }
+
+    [Obsolete("Use DownloadCsvAsync. Direct href has no auth header → 401. (BUG-29)")]
     public string GetCsvDownloadUrl(string key, Dictionary<string, string?> parameters)
     {
         var qs = string.Join("&", parameters

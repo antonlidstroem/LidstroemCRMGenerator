@@ -3,118 +3,155 @@
 @using Lidstroem.Frontend.Core.Services
 @inject ApiClient Api
 @inject SchemaService Schema
+@inject IJSRuntime JS
 
-<div class="relation-picker">
+<div class="relation-picker" id="@_pickerId">
     <input type="text"
            class="field-input"
            value="@_displayValue"
-           @oninput="SearchAsync"
-           @onfocus="OpenAsync"
-           placeholder="@($"Search {Field.RelatedEntityType}…")"
-           disabled="@Disabled" />
+           @oninput="OnSearchInput"
+           @onfocus="OpenDropdown"
+           placeholder="@("Search " + Field.DisplayName + "…")"
+           disabled="@Disabled"
+           autocomplete="off" />
 
-    @if (_open && _options.Count > 0)
+    @if (_open)
     {
-        <ul class="relation-dropdown">
-            @foreach (var opt in _options)
-            {
-                <li class="relation-option" @onclick="() => Select(opt)">
-                    @opt.Label
-                </li>
-            }
-        </ul>
-    }
-
-    @if (_open && _options.Count == 0 && !string.IsNullOrEmpty(_query))
-    {
-        <div class="relation-empty">No results for "@_query"</div>
+        @if (_options.Count > 0)
+        {
+            <ul class="relation-dropdown">
+                @foreach (var opt in _options)
+                {
+                    var optId    = opt.Id;
+                    var optLabel = opt.Label;
+                    <li class="relation-option"
+                        @onclick="() => Select(optId, optLabel)"
+                        @onclick:stopPropagation>
+                        @optLabel
+                    </li>
+                }
+            </ul>
+        }
+        else if (!string.IsNullOrEmpty(_search))
+        {
+            <ul class="relation-dropdown">
+                <li class="relation-empty">No results</li>
+            </ul>
+        }
     }
 </div>
 
 @code {
-    [Parameter, EditorRequired] public FieldDefinition Field { get; set; } = null!;
-    [Parameter] public string? Value { get; set; }
-    [Parameter] public EventCallback<string?> ValueChanged { get; set; }
-    [Parameter] public bool Disabled { get; set; }
+    [Parameter, EditorRequired] public FieldDefinition Field       { get; set; } = null!;
+    [Parameter]                 public string?         Value       { get; set; }
+    [Parameter]                 public EventCallback<string?> ValueChanged { get; set; }
+    [Parameter]                 public bool            Disabled    { get; set; }
 
-    private string? _displayValue;
-    private string? _query;
-    private bool _open;
-    private List<RelationOption> _options = new();
+    private string  _search       = string.Empty;
+    private string  _displayValue = string.Empty;
+    private bool    _open;
+    private string  _pickerId     = "rp-" + Guid.NewGuid().ToString("N")[..8];
+    private List<(int Id, string Label)> _options = new();
+    private DotNetObjectReference<RelationPicker>? _selfRef;
 
     protected override async Task OnParametersSetAsync()
     {
         if (!string.IsNullOrEmpty(Value) && string.IsNullOrEmpty(_displayValue))
-        {
-            // Resolve display name for existing value
-            var schema = Field.RelatedEntityType != null
-                ? await Schema.GetAsync(Field.RelatedEntityType) : null;
+            await LoadSelectedLabel(Value);
+    }
 
-            if (schema != null)
-            {
-                var item = await Api.GetOneAsync($"{schema.ApiBasePath}/{Value}");
-                _displayValue = item.HasValue ? ExtractLabel(item.Value) : Value;
-            }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _selfRef = DotNetObjectReference.Create(this);
+            // Register a document click listener that calls Close() when the
+            // user clicks outside this component. Fixes: dropdown stayed open
+            // indefinitely after selecting or clicking elsewhere.
+            await JS.InvokeVoidAsync("lidstroem.registerClickOutside", _pickerId, _selfRef);
         }
     }
 
-    private async Task OpenAsync()
+    [JSInvokable]
+    public void Close()
+    {
+        _open = false;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private bool _disposed;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _selfRef?.Dispose();
+        // BUG-38 FIX: Fire-and-forget JS.InvokeVoidAsync after disposal could run
+        // after the JS runtime is torn down, causing ObjectDisposedException.
+        // Use a synchronous best-effort pattern: only invoke if not already disposed.
+        try
+        {
+            _ = JS.InvokeVoidAsync("lidstroem.unregisterClickOutside", _pickerId);
+        }
+        catch { /* JS runtime may already be disposed — swallow silently */ }
+    }
+
+    private async Task LoadSelectedLabel(string rawId)
+    {
+        if (!int.TryParse(rawId, out var id) || string.IsNullOrEmpty(Field.RelatedEntityType)) return;
+        var relSchema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (relSchema == null) return;
+        var item = await Api.GetOneAsync(relSchema.ApiBasePath + "/" + id);
+        if (item.HasValue) _displayValue = GetLabel(item.Value, relSchema);
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _search = e.Value?.ToString() ?? string.Empty;
+        _displayValue = _search;
+        _open = true;
+        await LoadOptions();
+    }
+
+    private async Task LoadOptions()
+    {
+        if (string.IsNullOrEmpty(Field.RelatedEntityType)) return;
+        var relSchema = await Schema.GetAsync(Field.RelatedEntityType);
+        if (relSchema == null) return;
+
+        var items = await Api.GetListAsync(relSchema.ApiBasePath + "?page=1&pageSize=20");
+        _options = items?
+            .Select(el => (Id: GetId(el), Label: GetLabel(el, relSchema)))
+            .Where(o => o.Id > 0 && (string.IsNullOrEmpty(_search) ||
+                o.Label.Contains(_search, StringComparison.OrdinalIgnoreCase)))
+            .ToList() ?? new();
+    }
+
+    private void OpenDropdown()
     {
         _open = true;
-        await LoadOptionsAsync(string.Empty);
+        _ = LoadOptions();
     }
 
-    private async Task SearchAsync(ChangeEventArgs e)
+    private async Task Select(int id, string label)
     {
-        _query = e.Value?.ToString() ?? string.Empty;
-        _displayValue = _query;
-        await LoadOptionsAsync(_query);
+        _displayValue = label;
+        _search       = string.Empty;
+        _open         = false;
+        await ValueChanged.InvokeAsync(id.ToString());
     }
 
-    private async Task LoadOptionsAsync(string query)
+    private static int    GetId(JsonElement el) =>
+        el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
+
+    private static string GetLabel(JsonElement el, EntitySchema schema)
     {
-        if (Field.RelatedEntityType == null) return;
-
-        var schema = await Schema.GetAsync(Field.RelatedEntityType);
-        if (schema == null) return;
-
-        // Fix 1: Pass pageSize so we get a useful dropdown population.
-        // 200 is enough for any realistic picker; for tenants with more records
-        // the search-box filter will narrow the results client-side.
-        var items = await Api.GetListAsync($"{schema.ApiBasePath}?pageSize=200");
-        if (items == null) return;
-
-        _options = items
-            .Select(item => new RelationOption(
-                GetId(item) ?? string.Empty,
-                ExtractLabel(item)))
-            .Where(o => string.IsNullOrEmpty(query) ||
-                        o.Label.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .Take(10)
-            .ToList();
+        foreach (var col in schema.DefaultListColumns)
+            if (el.TryGetProperty(col, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString() ?? col;
+        foreach (var key in new[] { "name", "title", "displayName" })
+            if (el.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                return v.GetString() ?? key;
+        return el.TryGetProperty("id", out var id) ? "#" + id.GetInt32() : "?";
     }
-
-    // BUG FIX #8: Select was a synchronous void method that called ValueChanged.InvokeAsync
-    // without awaiting it. The returned Task was silently discarded, meaning any exception
-    // thrown by the parent's ValueChanged handler was swallowed and the component tree was
-    // not correctly notified of the state change. Changed to async Task.
-    private async Task Select(RelationOption option)
-    {
-        _displayValue = option.Label;
-        _open = false;
-        await ValueChanged.InvokeAsync(option.Id);
-    }
-
-    private static string? GetId(JsonElement el) =>
-        el.TryGetProperty("id", out var p) ? p.ToString() : null;
-
-    private static string ExtractLabel(JsonElement el)
-    {
-        foreach (var candidate in new[] { "displayName", "title", "name", "email" })
-            if (el.TryGetProperty(candidate, out var p) && p.ValueKind == JsonValueKind.String)
-                return p.GetString() ?? string.Empty;
-        return el.TryGetProperty("id", out var id) ? $"#{id}" : "Unknown";
-    }
-
-    private record RelationOption(string Id, string Label);
 }

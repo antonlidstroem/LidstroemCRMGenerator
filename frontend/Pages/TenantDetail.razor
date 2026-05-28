@@ -44,7 +44,7 @@
 
 <div class="detail-grid">
 
-    {{!-- ── General information ──────────────────────────────────────────── --}}
+    @* ── General information ──────────────────────────────────────────── *@
     <section class="detail-section">
         <h2 class="section-title">General information</h2>
 
@@ -96,7 +96,7 @@
         </div>
     </section>
 
-    {{!-- ── Plugin management ────────────────────────────────────────────── --}}
+    @* ── Plugin management ────────────────────────────────────────────── *@
     <section class="detail-section">
         <h2 class="section-title">Plugins</h2>
         <p class="section-description">
@@ -136,7 +136,7 @@
         }
     </section>
 
-    {{!-- ── Custom pages ──────────────────────────────────────────────────── --}}
+    @* ── Custom pages ──────────────────────────────────────────────────── *@
     <section class="detail-section">
         <h2 class="section-title">Custom pages</h2>
         <p class="section-description">
@@ -195,6 +195,122 @@
 
 </div>
 
+@* ── Roles ─────────────────────────────────────────────────────────────────── *@
+@* POINT 3 FIX: There was no UI to create tenant-specific roles, so the assign/
+   revoke toggles in ActorForm always showed "No roles defined". This section
+   lets SuperAdmin create and delete roles scoped to this tenant. *@
+<div class="detail-section" style="margin-top:1.5rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;">
+        <h2 class="section-title" style="margin:0;">Roles</h2>
+        <button class="btn btn-primary btn-sm" @onclick="OpenCreateRole">
+            <Icon Name="plus" Size="13" /> New role
+        </button>
+    </div>
+    <p class="section-description">
+        Roles defined here appear as assignable toggles on each user's profile page.
+    </p>
+
+    @if (_rolesLoading)
+    {
+        <div class="skeleton-row"></div>
+    }
+    else if (_roles.Count == 0)
+    {
+        <p class="muted">No roles yet. Create a role to start assigning permissions to users.</p>
+    }
+    else
+    {
+        <div class="plugin-grid">
+            @foreach (var role in _roles)
+            {
+                var roleId   = RoleId(role);
+                var roleName = RoleName(role);
+                <div class="plugin-card">
+                    <div class="plugin-card-info">
+                        <span class="plugin-card-name">@RoleDisplayName(role)</span>
+                        <span class="plugin-card-desc muted-small">@roleName</span>
+                    </div>
+                    <button class="btn btn-ghost btn-sm"
+                            @onclick="() => ConfirmDeleteRole(roleId, roleName)"
+                            title="Delete role"
+                            disabled="@_busy">
+                        <Icon Name="trash" Size="13" />
+                    </button>
+                </div>
+            }
+        </div>
+    }
+
+    @if (_roleError != null) { <div class="form-error" style="margin-top:.5rem;">@_roleError</div> }
+</div>
+
+@* ── Create role modal ─────────────────────────────────────────────────────── *@
+@if (_showCreateRole)
+{
+    <div class="modal-backdrop" @onclick="CloseCreateRole">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">New role</h2>
+                <button class="modal-close" @onclick="CloseCreateRole">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-field required">
+                    <label class="field-label">Display name</label>
+                    <input class="field-input" @bind="_newRoleDisplayName"
+                           placeholder="e.g. CRM Admin" />
+                </div>
+                <div class="form-field required">
+                    <label class="field-label">System key</label>
+                    <input class="field-input" @bind="_newRoleName"
+                           placeholder="e.g. CrmAdmin (no spaces)" />
+                    <span class="field-description">
+                        Used internally. Letters and dots only, no spaces.
+                    </span>
+                </div>
+                @if (_createRoleError != null)
+                {
+                    <div class="form-error">@_createRoleError</div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CloseCreateRole">Cancel</button>
+                <button class="btn btn-primary" @onclick="CreateRole"
+                        disabled="@(_busy
+                            || string.IsNullOrWhiteSpace(_newRoleName)
+                            || string.IsNullOrWhiteSpace(_newRoleDisplayName))">
+                    @(_busy ? "Creating…" : "Create role")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Delete role confirm modal ─────────────────────────────────────────────── *@
+@if (_deleteRoleId.HasValue)
+{
+    <div class="modal-backdrop" @onclick="CancelDeleteRole">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">Delete role "@_deleteRoleName"?</h2>
+                <button class="modal-close" @onclick="CancelDeleteRole">✕</button>
+            </div>
+            <div class="modal-body">
+                <p>
+                    This removes the role definition. Any users currently assigned this
+                    role will lose it immediately.
+                </p>
+                @if (_roleError != null) { <div class="form-error">@_roleError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CancelDeleteRole">Cancel</button>
+                <button class="btn btn-danger" @onclick="ExecuteDeleteRole" disabled="@_busy">
+                    @(_busy ? "Deleting…" : "Delete role")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public int Id { get; set; }
 
@@ -206,6 +322,7 @@
 
     // General info
     private string _name = string.Empty;
+    private string _tenantExternalId = string.Empty;  // Guid string — used for role scoping
     private string _editName = string.Empty;
     private string _editEmail = string.Empty;
     private string _editDescription = string.Empty;
@@ -223,9 +340,34 @@
     private HashSet<string> _enabledCustomPages = new(StringComparer.OrdinalIgnoreCase);
     private HashSet<string> _togglingCustomPages = new(StringComparer.OrdinalIgnoreCase);
 
+    // Roles — POINT 3
+    private List<JsonElement> _roles = new();
+    private bool    _rolesLoading      = true;
+    private bool    _showCreateRole;
+    private string  _newRoleName        = string.Empty;
+    private string  _newRoleDisplayName = string.Empty;
+    private string? _createRoleError;
+    private string? _roleError;
+    private int?    _deleteRoleId;
+    private string  _deleteRoleName = string.Empty;
+
     protected override async Task OnInitializedAsync()
     {
-        await Task.WhenAll(LoadTenantAsync(), LoadPluginsAsync(), LoadCustomPagesAsync());
+        // BUG-25 FIX: WhenAll swallowed exceptions from individual tasks — page
+        // rendered with partial data and no error message. Now each task is
+        // individually try-catched and errors are surfaced to the user.
+        var tenantTask      = LoadTenantAsync();
+        var pluginsTask     = LoadPluginsAsync();
+        var customPagesTask = LoadCustomPagesAsync();
+        var rolesTask       = LoadRolesAsync();
+
+        await Task.WhenAll(tenantTask, pluginsTask, customPagesTask, rolesTask);
+
+        if (tenantTask.IsFaulted)
+            _saveError = "Failed to load organisation details.";
+        if (pluginsTask.IsFaulted)
+            _saveError = (_saveError != null ? _saveError + " " : "") + "Failed to load plugins.";
+
         BuildCustomPageGroups();
         _loading = false;
     }
@@ -236,8 +378,9 @@
         if (result == null) return;
 
         _tenant = result;
-        _name = Str(result.Value, "name");
-        _editName = _name;
+        _name             = Str(result.Value, "name");
+        _tenantExternalId = Str(result.Value, "externalId");
+        _editName         = _name;
         _editEmail = Str(result.Value, "contactEmail");
         _editDescription = Str(result.Value, "description");
         _isActive = Bool(result.Value, "isActive");
@@ -346,8 +489,11 @@
             ? $"/api/admin/tenants/{Id}/activate"
             : $"/api/admin/tenants/{Id}/deactivate";
         await Api.PutAsync(url, new { });
+        // BUG-24 FIX: _isActive was updated but StateHasChanged was never called,
+        // leaving the badge and button frozen until the next render trigger.
         _isActive = activate;
         _busy = false;
+        StateHasChanged();
     }
 
     private async Task TogglePlugin(string key, bool enable)
@@ -397,6 +543,95 @@
         el.TryGetProperty(prop, out var p) && p.GetBoolean();
 
     private record PluginEntry(string Key, string DisplayName, string Description);
+    // ── Roles — POINT 3 ───────────────────────────────────────────────────────
+
+    private async Task LoadRolesAsync()
+    {
+        _rolesLoading = true;
+        // Fetch roles scoped to this tenant — GET /api/rbac/roles?tenantId={guid}
+        // Returns only non-system roles (BUG-35 fix in RbacController).
+        var tenantGuid = _tenantExternalId;
+        var result = await Api.GetListAsync(
+            string.IsNullOrEmpty(tenantGuid)
+                ? "/api/rbac/roles"
+                : "/api/rbac/roles?tenantId=" + Uri.EscapeDataString(tenantGuid));
+        _roles = result ?? new();
+        _rolesLoading = false;
+    }
+
+    private void OpenCreateRole()
+    {
+        _newRoleName = _newRoleDisplayName = string.Empty;
+        _createRoleError = null;
+        _showCreateRole  = true;
+    }
+
+    private void CloseCreateRole() => _showCreateRole = false;
+
+    private async Task CreateRole()
+    {
+        if (string.IsNullOrWhiteSpace(_newRoleName) ||
+            string.IsNullOrWhiteSpace(_newRoleDisplayName)) return;
+
+        // Basic validation: no spaces in system key
+        if (_newRoleName.Contains(' '))
+        {
+            _createRoleError = "System key cannot contain spaces.";
+            return;
+        }
+
+        _busy = true; _createRoleError = null;
+
+        var result = await Api.PostAsync("/api/rbac/roles", new
+        {
+            Name        = _newRoleName.Trim(),
+            DisplayName = _newRoleDisplayName.Trim(),
+            TenantId    = _tenantExternalId
+        });
+
+        _busy = false;
+
+        if (result == null)
+        {
+            _createRoleError = "Failed to create role. The system key may already exist.";
+            return;
+        }
+
+        _showCreateRole = false;
+        await LoadRolesAsync();
+    }
+
+    private void ConfirmDeleteRole(int id, string name)
+    {
+        _deleteRoleId   = id;
+        _deleteRoleName = name;
+        _roleError      = null;
+    }
+
+    private void CancelDeleteRole() => _deleteRoleId = null;
+
+    private async Task ExecuteDeleteRole()
+    {
+        if (!_deleteRoleId.HasValue) return;
+        _busy = true; _roleError = null;
+
+        var ok = await Api.DeleteAsync("/api/rbac/roles/" + _deleteRoleId.Value);
+        _busy = false;
+
+        if (!ok)
+        {
+            _roleError = "Could not delete role. It may still be assigned to users.";
+            return;
+        }
+
+        _deleteRoleId = null;
+        await LoadRolesAsync();
+    }
+
+    private static int    RoleId(JsonElement r)          => r.TryGetProperty("id",          out var p) ? p.GetInt32()    : 0;
+    private static string RoleName(JsonElement r)         => r.TryGetProperty("name",        out var p) ? p.GetString() ?? "" : "";
+    private static string RoleDisplayName(JsonElement r)  => r.TryGetProperty("displayName", out var p) ? p.GetString() ?? "" : RoleName(r);
+
     private record CustomPageEntry(string PageKey, string DisplayName, string Description,
         string Route, string? NavGroup, int NavOrder, string? Icon);
     private record CustomPageGroup(string? GroupName, List<CustomPageEntry> Pages);

@@ -26,29 +26,29 @@
 <div class="filter-bar">
     <select class="field-input field-select" style="max-width:260px;"
             value="@_tenantFilter"
-            @onchange="e => { _tenantFilter = e.Value?.ToString() ?? string.Empty; }">
+            @onchange="e => { _tenantFilter = e.Value?.ToString() ?? string.Empty; RebuildFilteredCache(); }">
         <option value="">All tenants</option>
         @foreach (var t in _tenants)
         {
-            <option value="@TenantId(t)">@TenantName(t)</option>
+            <option value="@Str(t, "tenantId")">@TenantName(t)</option>
         }
     </select>
     <input class="field-input" style="max-width:240px;"
            placeholder="Search name or email…"
            value="@_search"
-           @oninput="e => { _search = e.Value?.ToString() ?? string.Empty; }" />
+           @oninput="e => { _search = e.Value?.ToString() ?? string.Empty; RebuildFilteredCache(); }" />
 </div>
 
 @if (_loading)
 {
     <div class="skeleton-page" style="margin-top:1rem;">
-        @for (var i = 0; i < 5; i++) { <div class="skeleton-row"></div> }
+        @for (var i = 0; i < 6; i++) { <div class="skeleton-row" style="margin-bottom:.5rem;"></div> }
     </div>
 }
-else if (FilteredActors.Count == 0)
+else if (_filteredCache.Count == 0)
 {
     <div class="list-empty" style="margin-top:2rem;">
-        <Icon Name="user" Size="36" />
+        <Icon Name="users" Size="36" />
         <p>No users found.</p>
     </div>
 }
@@ -66,9 +66,9 @@ else
                 </tr>
             </thead>
             <tbody>
-                @foreach (var actor in FilteredActors)
+                @foreach (var actor in PagedActors)
                 {
-                    var id = GetId(actor);
+                    var id       = GetId(actor);
                     var detailUrl = "/admin/actors/" + id;
                     <tr class="data-row" @onclick="() => Nav.NavigateTo(detailUrl)">
                         <td>@Str(actor, "displayName")</td>
@@ -100,6 +100,11 @@ else
                                         title="Generate reset link">
                                     <Icon Name="share-2" Size="13" />
                                 </button>
+                                <button class="btn btn-ghost btn-sm"
+                                        @onclick="() => ConfirmDelete(actor)"
+                                        title="Delete user">
+                                    <Icon Name="trash" Size="13" />
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -107,9 +112,23 @@ else
             </tbody>
         </table>
     </div>
+
+    @* ── Pagination ──────────────────────────────────────────────────────── *@
+    @if (TotalPages > 1)
+    {
+        <div class="pagination">
+            <button class="btn btn-ghost btn-sm" @onclick="PrevPage" disabled="@(_page == 1)">
+                <Icon Name="arrow-left" Size="14" />
+            </button>
+            <span class="pagination-label">@_page / @TotalPages</span>
+            <button class="btn btn-ghost btn-sm" @onclick="NextPage" disabled="@(_page >= TotalPages)">
+                <Icon Name="arrow-right" Size="14" />
+            </button>
+        </div>
+    }
 }
 
-@* ── Create actor modal ────────────────────────────────────────────────────── *@
+@* ── Create modal ──────────────────────────────────────────────────────────── *@
 @if (_showCreate)
 {
     <div class="modal-backdrop" @onclick="CloseCreate">
@@ -125,7 +144,7 @@ else
                         <option value="">— select tenant —</option>
                         @foreach (var t in _tenants)
                         {
-                            <option value="@TenantId(t)">@TenantName(t)</option>
+                            <option value="@TenantIntId(t).ToString()">@TenantName(t)</option>
                         }
                     </select>
                 </div>
@@ -139,17 +158,14 @@ else
                 </div>
                 <div class="form-field">
                     <label class="field-label">Phone</label>
-                    <input class="field-input" type="tel" @bind="_newPhone" placeholder="+46 70 000 00 00" />
+                    <input class="field-input" type="tel" @bind="_newPhone" />
                 </div>
                 <div class="form-field required">
                     <label class="field-label">Password</label>
                     <input class="field-input" type="password" @bind="_newPassword"
                            placeholder="Min. 8 characters" />
                 </div>
-                @if (_createError != null)
-                {
-                    <div class="form-error">@_createError</div>
-                }
+                @if (_createError != null) { <div class="form-error">@_createError</div> }
             </div>
             <div class="modal-footer">
                 <button class="btn btn-ghost" @onclick="CloseCreate">Cancel</button>
@@ -160,6 +176,29 @@ else
                             || string.IsNullOrWhiteSpace(_newPassword)
                             || string.IsNullOrWhiteSpace(_newTenantId))">
                     @(_busy ? "Creating…" : "Create user")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Delete confirm modal ──────────────────────────────────────────────────── *@
+@if (_deleteActor.HasValue)
+{
+    <div class="modal-backdrop" @onclick="CancelDelete">
+        <div class="modal modal--sm" @onclick:stopPropagation>
+            <div class="modal-header">
+                <h2 class="modal-title">Delete @_deleteActorName?</h2>
+                <button class="modal-close" @onclick="CancelDelete">✕</button>
+            </div>
+            <div class="modal-body">
+                <p>This will permanently remove the user and all their credentials. This cannot be undone.</p>
+                @if (_deleteError != null) { <div class="form-error">@_deleteError</div> }
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" @onclick="CancelDelete">Cancel</button>
+                <button class="btn btn-danger" @onclick="ExecuteDelete" disabled="@_busy">
+                    @(_busy ? "Deleting…" : "Delete user")
                 </button>
             </div>
         </div>
@@ -207,20 +246,19 @@ else
             <div class="modal-body">
                 @if (_generatedToken == null)
                 {
-                    <p>Generate a one-time password reset link to share with the user.</p>
-                    <p>The link expires after 24 hours.</p>
+                    <p>Generate a one-time password reset link. Valid for 24 hours.</p>
                     @if (_resetError != null) { <div class="form-error">@_resetError</div> }
                 }
                 else
                 {
-                    <p>Share this link with the user. It expires in 24 h and can only be used once.</p>
+                    <p>Share this link with the user. Single use, expires in 24 h.</p>
                     <div class="reset-token-box">
                         <code class="reset-token-url">@_generatedLoginUrl</code>
                         <button class="btn btn-ghost btn-sm" @onclick="CopyResetLink">
                             <Icon Name="paperclip" Size="13" /> Copy
                         </button>
                     </div>
-                    @if (_copySuccess) { <div class="form-success">Copied to clipboard.</div> }
+                    @if (_copySuccess) { <div class="form-success">Copied.</div> }
                 }
             </div>
             <div class="modal-footer">
@@ -237,66 +275,117 @@ else
 }
 
 @code {
+    // ── Data ──────────────────────────────────────────────────────────────────
     private List<JsonElement> _actors  = new();
     private List<JsonElement> _tenants = new();
-    private Dictionary<string, string> _tenantNames = new();
+    private Dictionary<int, string> _tenantNamesById = new();
     private HashSet<int> _actorsWithCredentials = new();
     private bool _loading = true;
     private bool _busy;
-    private string _search        = string.Empty;
-    private string _tenantFilter  = string.Empty;
+
+    // Filter + pagination
+    private string _search       = string.Empty;
+    private string _tenantFilter = string.Empty;
+    private int    _page         = 1;
+    private const int PageSize   = 25;
 
     // Create
-    private bool _showCreate;
-    private string _newName     = string.Empty;
-    private string _newEmail    = string.Empty;
-    private string _newPhone    = string.Empty;
-    private string _newPassword = string.Empty;
-    private string _newTenantId = string.Empty;
+    private bool    _showCreate;
+    private string  _newName     = string.Empty;
+    private string  _newEmail    = string.Empty;
+    private string  _newPhone    = string.Empty;
+    private string  _newPassword = string.Empty;
+    private string  _newTenantId = string.Empty;
     private string? _createError;
 
+    // Delete
+    private int?    _deleteActor;
+    private string  _deleteActorName = string.Empty;
+    private string? _deleteError;
+
     // Set password
-    private int?   _passwordActorId;
-    private string _passwordActorName = string.Empty;
-    private string _setPassword       = string.Empty;
+    private int?    _passwordActorId;
+    private string  _passwordActorName = string.Empty;
+    private string  _setPassword       = string.Empty;
     private string? _passwordError;
-    private bool _passwordSuccess;
+    private bool    _passwordSuccess;
 
     // Reset token
-    private int?   _resetTokenActorId;
-    private string _resetTokenActorName = string.Empty;
+    private int?    _resetTokenActorId;
+    private string  _resetTokenActorName = string.Empty;
     private string? _generatedToken;
     private string? _generatedLoginUrl;
     private string? _resetError;
-    private bool _copySuccess;
+    private bool    _copySuccess;
 
-    private List<JsonElement> FilteredActors => _actors
-        .Where(a =>
-            (string.IsNullOrEmpty(_tenantFilter) ||
-             Str(a, "tenantId") == _tenantFilter) &&
-            (string.IsNullOrEmpty(_search) ||
-             Str(a, "displayName").Contains(_search, StringComparison.OrdinalIgnoreCase) ||
-             Str(a, "email").Contains(_search, StringComparison.OrdinalIgnoreCase)))
-        .ToList();
+    // ── Derived ───────────────────────────────────────────────────────────────
+
+    // BUG-30 FIX: FilteredActors was a computed property that called .Where().ToList()
+    // three times per render cycle (PagedActors, TotalPages, count display).
+    // Three list allocations + three full iterations per render. Now cached in a field
+    // and rebuilt only when _actors, _search or _tenantFilter changes.
+    private List<JsonElement> _filteredCache = new();
+
+    private void RebuildFilteredCache()
+    {
+        _filteredCache = _actors
+            .Where(a =>
+                (string.IsNullOrEmpty(_tenantFilter) ||
+                 Str(a, "tenantId").Equals(_tenantFilter, StringComparison.OrdinalIgnoreCase)) &&
+                (string.IsNullOrEmpty(_search) ||
+                 Str(a, "displayName").Contains(_search, StringComparison.OrdinalIgnoreCase) ||
+                 Str(a, "email").Contains(_search, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        _page = 1;
+    }
+
+    private List<JsonElement> PagedActors =>
+        _filteredCache.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(_filteredCache.Count / (double)PageSize));
+
+    private void PrevPage() { if (_page > 1) _page--; }
+    private void NextPage() { if (_page < TotalPages) _page++; }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     protected override async Task OnInitializedAsync() => await LoadAllAsync();
 
     private async Task LoadAllAsync()
     {
         _loading = true;
+        _page    = 1;
+
         var actorsTask  = Api.GetListAsync("/api/actors?page=1&pageSize=500");
         var tenantsTask = Api.GetListAsync("/api/admin/tenants");
         await Task.WhenAll(actorsTask, tenantsTask);
+
         _actors  = actorsTask.Result  ?? new();
         _tenants = tenantsTask.Result ?? new();
-        _tenantNames = _tenants.ToDictionary(TenantId, TenantName);
+
+        // Build lookup by int id (what actors reference via TenantId resolution)
+        // Tenants use Guid TenantId externally but actors carry a string tenantId
+        // in their JSON from EF serialisation. We map by name here as fallback.
+        _tenantNamesById = _tenants
+            .Where(t => TenantIntId(t) > 0)
+            .ToDictionary(TenantIntId, TenantName);
+
+        await LoadCredentialsStatusAsync();
         _loading = false;
+        RebuildFilteredCache();
     }
 
-    private string GetTenantName(JsonElement actor)
+    private async Task LoadCredentialsStatusAsync()
     {
-        var tid = Str(actor, "tenantId");
-        return _tenantNames.TryGetValue(tid, out var n) ? n : "—";
+        if (_actors.Count == 0) return;
+        var ids = string.Join(",", _actors.Select(a => GetId(a)).Where(id => id > 0));
+        if (string.IsNullOrEmpty(ids)) return;
+
+        var result = await Api.GetListAsync("/api/rbac/actors/credentials-status?actorIds=" + ids);
+        _actorsWithCredentials = result != null
+            ? new HashSet<int>(result.Select(el =>
+                el.ValueKind == JsonValueKind.Number ? el.GetInt32() : 0).Where(id => id > 0))
+            : new HashSet<int>();
     }
 
     // ── Create ────────────────────────────────────────────────────────────────
@@ -313,10 +402,9 @@ else
 
     private async Task CreateActor()
     {
-        if (string.IsNullOrWhiteSpace(_newName)     ||
-            string.IsNullOrWhiteSpace(_newEmail)    ||
-            string.IsNullOrWhiteSpace(_newPassword) ||
-            string.IsNullOrWhiteSpace(_newTenantId)) return;
+        if (string.IsNullOrWhiteSpace(_newName) || string.IsNullOrWhiteSpace(_newEmail) ||
+            string.IsNullOrWhiteSpace(_newPassword) || string.IsNullOrWhiteSpace(_newTenantId))
+            return;
 
         _busy = true; _createError = null;
 
@@ -336,7 +424,6 @@ else
             new { ActorId = actorId, Password = _newPassword });
 
         _busy = false;
-
         if (!pwOk)
         {
             _createError = "User created but password could not be set. Use the set-password button to retry.";
@@ -348,15 +435,38 @@ else
         await LoadAllAsync();
     }
 
+    // ── Delete ────────────────────────────────────────────────────────────────
+
+    private void ConfirmDelete(JsonElement actor)
+    {
+        _deleteActor     = GetId(actor);
+        _deleteActorName = Str(actor, "displayName");
+        _deleteError     = null;
+    }
+
+    private void CancelDelete() => _deleteActor = null;
+
+    private async Task ExecuteDelete()
+    {
+        if (!_deleteActor.HasValue) return;
+        _busy = true; _deleteError = null;
+
+        var ok = await Api.DeleteAsync("/api/actors/" + _deleteActor.Value);
+        _busy = false;
+
+        if (!ok) { _deleteError = "Failed to delete. The user may have associated records."; return; }
+
+        _deleteActor = null;
+        await LoadAllAsync();
+    }
+
     // ── Set password ──────────────────────────────────────────────────────────
 
     private void OpenSetPassword(JsonElement actor)
     {
         _passwordActorId   = GetId(actor);
         _passwordActorName = Str(actor, "displayName");
-        _setPassword       = string.Empty;
-        _passwordError     = null;
-        _passwordSuccess   = false;
+        _setPassword = string.Empty; _passwordError = null; _passwordSuccess = false;
     }
 
     private void CloseSetPassword() => _passwordActorId = null;
@@ -383,10 +493,7 @@ else
     {
         _resetTokenActorId   = GetId(actor);
         _resetTokenActorName = Str(actor, "displayName");
-        _generatedToken      = null;
-        _generatedLoginUrl   = null;
-        _resetError          = null;
-        _copySuccess         = false;
+        _generatedToken = null; _generatedLoginUrl = null; _resetError = null; _copySuccess = false;
     }
 
     private void CloseResetToken() => _resetTokenActorId = null;
@@ -417,8 +524,36 @@ else
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static int    GetId(JsonElement el)         => el.TryGetProperty("id", out var p) ? p.GetInt32() : 0;
-    private static string Str(JsonElement el, string k) => el.TryGetProperty(k,    out var p) ? p.GetString() ?? "" : "";
-    private static string TenantId(JsonElement t)       => Str(t, "externalId");
-    private static string TenantName(JsonElement t)     => Str(t, "name");
+    private string GetTenantName(JsonElement actor)
+    {
+        // Actors carry tenantId as a GUID string from EF serialisation.
+        // Map by matching the tenant's own tenantId field.
+        var actorTid = Str(actor, "tenantId");
+        if (string.IsNullOrEmpty(actorTid)) return "—";
+
+        // Try direct GUID match against tenant's tenantId/externalId fields
+        foreach (var t in _tenants)
+        {
+            if (Str(t, "tenantId") == actorTid || Str(t, "externalId") == actorTid)
+                return TenantName(t);
+        }
+        return "—";
+    }
+
+    private int GetActorTenantIntId(JsonElement actor)
+    {
+        // Used for the filter dropdown which keys on tenant int id
+        var actorTid = Str(actor, "tenantId");
+        foreach (var t in _tenants)
+        {
+            if (Str(t, "tenantId") == actorTid || Str(t, "externalId") == actorTid)
+                return TenantIntId(t);
+        }
+        return 0;
+    }
+
+    private static int    GetId(JsonElement el)         => el.TryGetProperty("id",   out var p) ? p.GetInt32() : 0;
+    private static string Str(JsonElement el, string k) => el.TryGetProperty(k,      out var p) ? p.GetString() ?? "" : "";
+    private static int    TenantIntId(JsonElement t)    => t.TryGetProperty("id",    out var p) ? p.GetInt32() : 0;
+    private static string TenantName(JsonElement t)     => t.TryGetProperty("name",  out var p) ? p.GetString() ?? "—" : "—";
 }

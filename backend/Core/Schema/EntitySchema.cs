@@ -26,6 +26,12 @@ public class EntitySchema
     /// </summary>
     public int NavOrder { get; init; } = 100;
 
+    /// <summary>
+    /// When true the entity appears as a count-card on the dashboard.
+    /// Defaults to true so all entities show up unless explicitly excluded.
+    /// </summary>
+    public bool ShowOnDashboard { get; init; } = true;
+
     public IReadOnlyList<FieldDefinition> Fields { get; init; } = new List<FieldDefinition>();
     public IReadOnlyList<ActionDefinition> Actions { get; init; } = new List<ActionDefinition>();
     public IReadOnlyList<string> DefaultListColumns { get; init; } = new List<string>();

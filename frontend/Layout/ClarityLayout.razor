@@ -104,6 +104,14 @@
 
     private async Task BuildNavAsync()
     {
+        // BUG-26 FIX: BuildNavAsync called Schema.GetNavGroupsAsync even when not
+        // authenticated (e.g. hot-reload during dev), causing an unauthenticated
+        // GET /api/schema → 401. Guard with IsAuthenticated first.
+        if (!Auth.IsAuthenticated)
+        {
+            _navGroups.Clear();
+            return;
+        }
         // Load all three nav sources in parallel
         var schemasTask = Schema.GetNavGroupsAsync();
         var reportsTask = Reports.GetAvailableAsync();

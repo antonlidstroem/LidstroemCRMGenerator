@@ -1,5 +1,19 @@
 namespace Lidstroem.Core.Interfaces;
 
+/// <summary>
+/// Convenience context for controllers that need both tenant identity and
+/// synchronous permission checks against the current HTTP request's claims.
+/// Implementations resolve permissions from cached claims — no async needed.
+/// </summary>
+public interface IAuthContext
+{
+    /// <summary>The tenant GUID from the JWT (Tenant.ExternalId). Null when unauthenticated.</summary>
+    Guid? TenantId { get; }
+
+    /// <summary>Synchronous permission check against pre-loaded claims.</summary>
+    bool HasPermission(string permission);
+}
+
 public interface ITenantContext
 {
     Guid TenantId { get; }

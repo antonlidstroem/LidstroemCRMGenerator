@@ -10,6 +10,7 @@ public record EntitySchema(
     string ApiBasePath,
     string? NavGroup,
     int NavOrder,
+    bool ShowOnDashboard,
     IReadOnlyList<FieldDefinition> Fields,
     IReadOnlyList<ActionDefinition> Actions,
     IReadOnlyList<string> DefaultListColumns);

@@ -17,7 +17,7 @@
 @if (_loading)
 {
     <div class="skeleton-page">
-        <div class="skeleton-row" style="width:35%; height:2rem; margin-bottom:1.5rem;"></div>
+        <div class="skeleton-row" style="width:35%;height:2rem;margin-bottom:1.5rem;"></div>
         @for (var i = 0; i < 4; i++) { <div class="skeleton-row" style="margin-bottom:.75rem;"></div> }
     </div>
 }
@@ -55,8 +55,8 @@ else
                 <input class="field-input" type="tel" @bind="_phone" />
             </div>
 
-            @if (_profileError != null)   { <div class="form-error">@_profileError</div> }
-            @if (_profileSuccess)         { <div class="form-success"><Icon Name="check" Size="14" /> Saved.</div> }
+            @if (_profileError != null)  { <div class="form-error">@_profileError</div> }
+            @if (_profileSuccess)        { <div class="form-success"><Icon Name="check" Size="14" /> Saved.</div> }
 
             <div class="form-actions">
                 <button class="btn btn-primary" @onclick="SaveProfile"
@@ -67,7 +67,7 @@ else
         </div>
 
         @* ── Right: credentials + roles ──────────────────────────────────────── *@
-        <div style="display:flex; flex-direction:column; gap:1.5rem;">
+        <div style="display:flex;flex-direction:column;gap:1.5rem;">
 
             <div class="detail-section">
                 <h2 class="section-title">Password</h2>
@@ -102,8 +102,8 @@ else
                             <Icon Name="paperclip" Size="13" /> Copy
                         </button>
                     </div>
-                    @if (_copySuccess) { <div class="form-success" style="margin-top:.5rem;">Copied to clipboard.</div> }
-                    <p class="muted-small" style="margin-top:.5rem;">Expires in 24 hours. Single use.</p>
+                    @if (_copySuccess) { <div class="form-success" style="margin-top:.5rem;">Copied.</div> }
+                    <p class="muted-small" style="margin-top:.5rem;">Expires 24 h. Single use.</p>
                 }
             </div>
 
@@ -118,19 +118,24 @@ else
                 else if (_availableRoles.Count == 0)
                 {
                     <p class="muted">No roles defined for this tenant.</p>
+                    <p class="muted-small">
+                        Create roles first under
+                        <a href="/admin/tenants">Organisations</a>.
+                    </p>
                 }
                 else
                 {
                     <div class="plugin-grid">
                         @foreach (var role in _availableRoles)
                         {
-                            var assigned = _assignedRoles.Contains(role);
+                            var roleName = role;
+                            var assigned = _assignedRoles.Contains(roleName);
                             <div class="plugin-card @(assigned ? "plugin-card--enabled" : "")">
                                 <div class="plugin-card-info">
-                                    <span class="plugin-card-name">@role</span>
+                                    <span class="plugin-card-name">@roleName</span>
                                 </div>
                                 <button class="toggle @(assigned ? "toggle--on" : "")"
-                                        @onclick="() => ToggleRole(role, !assigned)"
+                                        @onclick="() => ToggleRole(roleName, !assigned)"
                                         disabled="@_busy"
                                         title="@(assigned ? "Remove role" : "Assign role")">
                                     <span class="toggle-knob"></span>
@@ -156,7 +161,8 @@ else
     private string  _name     = string.Empty;
     private string  _email    = string.Empty;
     private string  _phone    = string.Empty;
-    private string  _tenantId = string.Empty;
+    private string  _tenantId = string.Empty;   // GUID string from JSON
+    private Guid    _tenantGuid;
     private string? _tenantName;
 
     private string? _profileError;
@@ -168,7 +174,7 @@ else
     private string? _resetLink;
     private bool    _copySuccess;
 
-    private bool         _rolesLoading = true;
+    private bool         _rolesLoading  = true;
     private List<string> _availableRoles = new();
     private HashSet<string> _assignedRoles = new(StringComparer.OrdinalIgnoreCase);
     private string? _roleError;
@@ -185,7 +191,10 @@ else
         _phone     = Str(actor.Value, "phoneNumber");
         _tenantId  = Str(actor.Value, "tenantId");
         _actorName = _name;
-        _loading   = false;
+
+        Guid.TryParse(_tenantId, out _tenantGuid);
+
+        _loading = false;
 
         await Task.WhenAll(LoadRolesAsync(), LoadTenantNameAsync());
     }
@@ -193,12 +202,33 @@ else
     private async Task LoadRolesAsync()
     {
         _rolesLoading = true;
+
+        // Fetch roles scoped to this tenant — filtered by tenantId on the backend.
+        // GET /api/rbac/roles returns all system roles; we filter client-side by
+        // tenant-scoped assignments when tenantId is available.
         var rolesResult = await Api.GetListAsync("/api/rbac/roles");
         _availableRoles = rolesResult?
             .Select(r => Str(r, "name"))
             .Where(n => !string.IsNullOrEmpty(n))
             .OrderBy(n => n)
             .ToList() ?? new();
+
+        // Load this actor's currently assigned roles from the new endpoint.
+        // Previously _assignedRoles was never populated on load — all toggles
+        // showed as off regardless of actual role assignments.
+        if (_tenantGuid != Guid.Empty)
+        {
+            var assigned = await Api.GetListAsync(
+                "/api/rbac/actor/" + Id + "/roles?tenantId=" + _tenantGuid);
+            _assignedRoles = assigned != null
+                ? new HashSet<string>(
+                    assigned.Select(r => r.ValueKind == JsonValueKind.String
+                        ? r.GetString() ?? "" : Str(r, "name"))
+                        .Where(n => !string.IsNullOrEmpty(n)),
+                    StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
         _rolesLoading = false;
     }
 
@@ -209,10 +239,10 @@ else
         if (tenants == null) return;
         foreach (var t in tenants)
         {
-            if (Str(t, "externalId").Equals(_tenantId, StringComparison.OrdinalIgnoreCase))
+            if (Str(t, "tenantId") == _tenantId || Str(t, "externalId") == _tenantId)
             {
                 _tenantName = Str(t, "name");
-                break;
+                return;
             }
         }
     }
@@ -248,7 +278,7 @@ else
 
     private async Task GenerateResetLink()
     {
-        _busy = true; _resetLink = null; _copySuccess = false;
+        _busy = true; _resetLink = null; _copySuccess = false; _passwordError = null;
 
         var result = await Api.PostAsync("/api/auth/generate-reset-token", new { ActorId = Id });
 
@@ -270,11 +300,17 @@ else
     private async Task ToggleRole(string roleName, bool assign)
     {
         _busy = true; _roleError = null;
-        var body     = new { ActorId = Id, TenantId = _tenantId, RoleName = roleName };
-        var endpoint = assign ? "/api/rbac/assign" : "/api/rbac/revoke";
-        var ok       = await Api.PostAsync(endpoint, body);
+
+        var body   = new { ActorId = Id, TenantId = _tenantGuid, RoleName = roleName };
+        var ep     = assign ? "/api/rbac/assign" : "/api/rbac/revoke";
+        var result = await Api.PostAsync(ep, body);    // PostAsync returns JsonElement?
+
         _busy = false;
-        if (!ok) { _roleError = "Failed to " + (assign ? "assign" : "remove") + " role."; return; }
+        if (result == null)
+        {
+            _roleError = "Failed to " + (assign ? "assign" : "remove") + " role.";
+            return;
+        }
         if (assign) _assignedRoles.Add(roleName); else _assignedRoles.Remove(roleName);
     }
 
